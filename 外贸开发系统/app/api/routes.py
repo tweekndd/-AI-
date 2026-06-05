@@ -389,7 +389,20 @@ def list_search_tasks(db: Session = Depends(get_db)):
             "created_at": t.created_at.isoformat() if t.created_at else None,
             "finished_at": t.finished_at.isoformat() if t.finished_at else None,
         })
-    return {"tasks": result, "total": len(result)}
+
+    # 标记当前活跃任务（优先 Running，其次 Pending）
+    active_task_id = None
+    for t in tasks:
+        if t.status == "Running":
+            active_task_id = t.id
+            break
+    if active_task_id is None:
+        for t in tasks:
+            if t.status == "Pending":
+                active_task_id = t.id
+                break
+
+    return {"tasks": result, "total": len(result), "active_task_id": active_task_id}
 
 
 @router.post("/discovery/tasks/{task_id}/pause")
