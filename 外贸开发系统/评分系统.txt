@@ -1,0 +1,259 @@
+请重构当前项目的客户评分系统。
+
+当前问题：
+
+目前系统把官网内容发送给AI后，由AI直接给出0-100分评分。
+
+这种方式存在严重问题：
+
+1. AI评分标准不固定
+2. 不同客户容易得到相似分数
+3. 无法体现业务经验
+4. 无法解释评分来源
+5. 排序结果参考价值低
+
+请修改系统架构。
+
+====================
+
+新的架构
+
+AI不再负责打分。
+
+AI只负责：
+
+1. 信息提取
+2. 公司分类
+3. 项目识别
+4. 开发切入点生成
+5. 客户摘要生成
+
+评分必须由程序规则完成。
+
+====================
+
+新增规则评分引擎
+
+创建文件：
+
+scoring_engine.py
+
+====================
+
+评分维度
+
+总分100分
+
+由以下维度组成：
+
+1. 行业匹配度
+   最高30分
+
+关键词：
+
+wastewater
+water treatment
+sewage
+effluent
+biogas
+anaerobic digestion
+digester
+sludge
+municipal water
+desalination
+irrigation
+
+每个命中加分。
+
+请设计合理权重。
+
+====================
+
+2. 项目匹配度
+   最高25分
+
+识别：
+
+projects
+case studies
+references
+completed projects
+ongoing projects
+
+如果存在项目案例页面：
+
+增加分数。
+
+如果项目涉及：
+
+wastewater
+water treatment
+biogas
+
+进一步加分。
+
+====================
+
+3. 公司类型
+   最高20分
+
+EPC = 20
+
+Contractor = 18
+
+Water Treatment Company = 18
+
+Manufacturer = 12
+
+Distributor = 10
+
+Consultant = 6
+
+Other = 0
+
+AI负责识别公司类型。
+
+程序负责加分。
+
+====================
+
+4. 国家优先级
+   最高15分
+
+国家权重可配置。
+
+例如：
+
+Saudi Arabia = 15
+
+UAE = 12
+
+Qatar = 12
+
+Australia = 10
+
+USA = 0
+
+Europe = 8
+
+Latin America=10
+
+Other = 5
+
+请设计为配置文件。
+
+方便后期修改。
+
+====================
+
+5. 联系方式完整度
+   最高10分
+
+邮箱数量：
+
+1个邮箱 = 3分
+
+2个邮箱 = 5分
+
+3个邮箱 = 8分
+
+4个以上邮箱 = 10分
+
+====================
+
+新增字段
+
+industry_score
+
+project_score
+
+company_type_score
+
+country_score
+
+contact_score
+
+total_score
+
+priority
+
+====================
+
+优先级规则
+
+A = 80-100
+
+B = 60-79
+
+C = 40-59
+
+D = 0-39
+
+====================
+
+AI输出修改
+
+删除：
+
+score
+
+保留：
+
+company_type
+
+analysis_reason
+
+sales_hook
+
+target_position
+
+summary
+
+identified_projects
+
+====================
+
+客户详情页新增
+
+评分明细
+
+例如：
+
+行业匹配度：
+25/30
+
+项目匹配度：
+20/25
+
+公司类型：
+20/20
+
+国家：
+15/15
+
+联系方式：
+8/10
+
+总分：
+88
+
+优先级：
+A
+
+====================
+
+最终目标
+
+评分必须由程序计算。
+
+AI仅负责提取和判断。
+
+请提供：
+
+1. 数据库修改方案
+2. scoring_engine.py完整代码
+3. 配置文件设计
+4. 前端显示修改方案
+5. API接口修改方案
+
+并按照可运行项目标准输出代码。
