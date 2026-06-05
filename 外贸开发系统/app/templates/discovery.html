@@ -175,9 +175,83 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
 
     <script>
-        let taskPollTimer = null;
+        // ═══════════════════════════════════════════
+        // 轮询管理（单例，避免多个 setInterval 并存）
+        // ═══════════════════════════════════════════
+        let _pollTimer = null;
+        let _activeTaskId = null;        // 后端标记的当前活跃任务ID
+        let _lastActiveTaskKey = '';      // 用于判断activeTask是否变化，避免无效DOM重建
 
-        // ──── 预览扩展关键词 ────
+        function startPolling() {
+            if (_pollTimer) return;        // 已存在则不重复创建
+            _pollTimer = setInterval(_pollTick, 3000);
+        }
+
+        function clearPolling() {
+            if (_pollTimer) {
+                clearInterval(_pollTimer);
+                _pollTimer = null;
+            }
+        }
+
+        // 页面关闭/刷新时清理
+        window.addEventListener('beforeunload', clearPolling);
+
+        // 每秒检查是否还有活跃任务，无则停轮询
+        function _checkShouldPoll() {
+            if (_activeTaskId === null && _pollTimer) {
+                clearPolling();
+            }
+        }
+
+        // ──── 带超时的 fetch 封装 ────
+        async function _fetchWithTimeout(url, options = {}, timeout = 15000) {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), timeout);
+            try {
+                const resp = await fetch(url, { ...options, signal: controller.signal });
+                clearTimeout(timer);
+                return resp;
+            } catch (err) {
+                clearTimeout(timer);
+                if (err.name === 'AbortError') {
+                    throw new Error('请求超时');
+                }
+                throw err;
+            }
+        }
+
+        // ──── 安全转义（防止 HTML 注入） ────
+        function _esc(str) {
+            if (str === null || str === undefined) return '';
+            const d = document.createElement('div');
+            d.textContent = String(str);
+            return d.innerHTML;
+        }
+
+        // ──── 安全的数字兜底 ────
+        function _num(val, fallback = 0) {
+            const n = Number(val);
+            return Number.isFinite(n) ? n : fallback;
+        }
+
+        // ──── 安全的数组兜底 ────
+        function _arr(val) {
+            return Array.isArray(val) ? val : [];
+        }
+
+        // ──── 安全的进度计算 ────
+        function _calcProgress(currentIdx, totalKw) {
+            const idx = _num(currentIdx, 0);
+            const total = _num(totalKw, 1);
+            if (total <= 0) return 0;
+            const p = Math.round((idx / total) * 100);
+            return Math.min(Math.max(p, 0), 100);
+        }
+
+        // ═══════════════════════════════════════════
+        // 预览扩展关键词
+        // ═══════════════════════════════════════════
         async function previewKeywords() {
             const keyword = document.getElementById('discoveryKeyword').value.trim();
             if (!keyword) { alert('请输入关键词'); return; }
@@ -185,16 +259,24 @@
             btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
             document.getElementById('previewResult').textContent = '正在扩展...';
             try {
-                const resp = await fetch(`/api/discovery/expand-keywords?keyword=${encodeURIComponent(keyword)}`);
+                const resp = await _fetchWithTimeout(`/api/discovery/expand-keywords?keyword=${encodeURIComponent(keyword)}`);
+                if (!resp.ok) throw new Error('服务器错误');
                 const data = await resp.json();
-                if (data.expanded_keywords) {
-                    document.getElementById('previewResult').textContent = `扩展了 ${data.expanded_keywords.length} 个关键词: ${data.expanded_keywords.join(', ')}`;
-                }
-            } catch (err) { document.getElementById('previewResult').textContent = '扩展失败: ' + err.message; }
-            finally { btn.disabled = false; btn.innerHTML = '<i class="bi bi-magic"></i> 预览扩展关键词'; }
+                const kws = _arr(data.expanded_keywords);
+                document.getElementById('previewResult').textContent =
+                    kws.length > 0
+                        ? `扩展了 ${kws.length} 个关键词: ${kws.join(', ')}`
+                        : '扩展失败，请重试';
+            } catch (err) {
+                document.getElementById('previewResult').textContent = '扩展失败: ' + err.message;
+            } finally {
+                btn.disabled = false; btn.innerHTML = '<i class="bi bi-magic"></i> 预览扩展关键词';
+            }
         }
 
-        // ──── 开始搜索 ────
+        // ═══════════════════════════════════════════
+        // 开始搜索
+        // ═══════════════════════════════════════════
         async function startSearch() {
             const country = document.getElementById('discoveryCountry').value.trim();
             const keyword = document.getElementById('discoveryKeyword').value.trim();
@@ -206,167 +288,230 @@
             btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 启动中...';
 
             try {
-                const resp = await fetch(`/api/discovery/search-task?country=${encodeURIComponent(country)}&keyword=${encodeURIComponent(keyword)}&depth=${depth}`, { method: 'POST' });
-                const data = await resp.json();
-                if (!resp.ok) throw new Error(data.detail || '创建任务失败');
-                updateSearchStatus('搜索任务已启动', '正在扩展关键词...', 0, [], 0);
-                loadTasks();
-                // 开始轮询
-                if (!taskPollTimer) {
-                    taskPollTimer = setInterval(() => { loadTasks(); loadDiscovered(); }, 3000);
+                const resp = await _fetchWithTimeout(
+                    `/api/discovery/search-task?country=${encodeURIComponent(country)}&keyword=${encodeURIComponent(keyword)}&depth=${depth}`,
+                    { method: 'POST' }
+                );
+                if (!resp.ok) {
+                    const errData = await resp.json().catch(() => ({}));
+                    throw new Error(errData.detail || '创建任务失败');
                 }
-            } catch (err) { alert('启动失败: ' + err.message); }
-            finally { btn.disabled = false; btn.innerHTML = '<i class="bi bi-play-fill"></i> Start Search'; }
+                await _refreshAll();
+                startPolling();
+            } catch (err) {
+                alert('启动失败: ' + err.message);
+            } finally {
+                btn.disabled = false; btn.innerHTML = '<i class="bi bi-play-fill"></i> Start Search';
+            }
         }
 
-        // ──── 停止搜索任务 ────
+        // ═══════════════════════════════════════════
+        // 停止搜索任务
+        // ═══════════════════════════════════════════
         async function stopSearchTask() {
             try {
-                await fetch('/api/stop-analysis', { method: 'POST' });
-                updateSearchStatus('正在停止...', '等待当前步骤完成后停止', 0, [], 0);
-            } catch (err) { console.error('停止失败:', err); }
+                await _fetchWithTimeout('/api/stop-analysis', { method: 'POST' });
+                // 停止后立即刷新任务状态，不用等待轮询
+                await _refreshAll();
+            } catch (err) {
+                console.error('停止失败:', err);
+            }
         }
 
+        // ═══════════════════════════════════════════
+        // 更新搜索状态栏（仅当 activeTask 变化时全量重建关键词列表）
+        // ═══════════════════════════════════════════
         function updateSearchStatus(title, detail, progress, keywords, currentIdx) {
+            // 文本节点直接更新
             document.getElementById('searchStatusText').textContent = title;
             document.getElementById('searchProgressDetail').textContent = detail;
-            document.getElementById('searchProgressBar').style.width = Math.min(progress, 100) + '%';
-            document.getElementById('searchProgressBar').textContent = progress + '%';
+            const bar = document.getElementById('searchProgressBar');
+            const pct = Math.min(_num(progress), 100);
+            bar.style.width = pct + '%';
+            bar.textContent = pct + '%';
             document.getElementById('searchRunningBar').classList.remove('d-none');
 
-            // 更新关键词列表
-            const kwContainer = document.getElementById('keywordListContainer');
-            if (keywords && keywords.length > 0) {
-                let kwHtml = '';
-                keywords.forEach((kw, i) => {
-                    const isDone = i < currentIdx;
-                    const isCurrent = i === currentIdx;
-                    const isPending = i > currentIdx;
-                    let cls = 'bg-light text-muted border';
-                    let icon = '';
-                    if (isDone) { cls = 'bg-success'; icon = '✅ '; }
-                    else if (isCurrent) { cls = 'bg-warning text-dark'; icon = '⏳ '; }
-                    else { icon = '⏸️ '; }
-                    kwHtml += `<span class="badge ${cls}" style="font-weight:400">${icon}${kw}</span>`;
-                });
-                kwContainer.innerHTML = kwHtml;
-            } else {
-                kwContainer.innerHTML = '<span class="text-muted small">暂无关键词</span>';
+            // 关键词列表：只在 activeTask 变化时重建
+            const container = document.getElementById('keywordListContainer');
+            const newKey = JSON.stringify({ kws: keywords, idx: currentIdx });
+            if (newKey === container.dataset.lastKey) return;   // 无变化，跳过
+
+            container.dataset.lastKey = newKey;
+
+            const kws = _arr(keywords);
+            if (kws.length === 0) {
+                container.innerHTML = '<span class="text-muted small">暂无关键词</span>';
+                return;
             }
+
+            let html = '';
+            const idx = _num(currentIdx);
+            kws.forEach((kw, i) => {
+                let cls, icon;
+                if (i < idx)       { cls = 'bg-success';       icon = '✅ '; }
+                else if (i === idx) { cls = 'bg-warning text-dark'; icon = '⏳ '; }
+                else               { cls = 'bg-light text-muted border'; icon = '⏸️ '; }
+                html += `<span class="badge ${cls}" style="font-weight:400">${icon}${_esc(kw)}</span>`;
+            });
+            container.innerHTML = html;
         }
 
         function hideSearchStatus() {
             document.getElementById('searchRunningBar').classList.add('d-none');
         }
 
-        function startPolling() {
-            if (taskPollTimer) clearInterval(taskPollTimer);
-            taskPollTimer = setInterval(() => { loadTasks(); loadDiscovered(); }, 3000);
-        }
-
-        // ──── 加载任务列表 ────
-        async function loadTasks() {
+        // ═══════════════════════════════════════════
+        // 统一的轮询回调（单点更新）
+        // ═══════════════════════════════════════════
+        async function _pollTick() {
             try {
-                const resp = await fetch('/api/discovery/tasks');
+                const resp = await _fetchWithTimeout('/api/discovery/tasks');
+                if (!resp.ok) return;
                 const data = await resp.json();
-                const tbody = document.getElementById('taskTableBody');
 
-                if (!data.tasks || data.tasks.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="10" class="text-center text-muted py-4">暂无搜索任务</td></tr>';
-                    hideSearchStatus();
-                    return;
-                }
+                // 更新活跃任务ID
+                _activeTaskId = data.active_task_id ?? null;
 
-                const statusBadge = {
-                    'Pending': 'bg-secondary', 'Running': 'bg-warning text-dark',
-                    'Completed': 'bg-success', 'Failed': 'bg-danger', 'Paused': 'bg-info text-dark'
-                };
-
-                // 找到当前活跃的任务（优先 Running，其次 Pending）
-                const activeTask = data.tasks.find(t => t.status === 'Running') ||
-                                   data.tasks.find(t => t.status === 'Pending');
+                // 更新任务表格
+                _renderTaskTable(data);
 
                 // 更新状态栏
-                if (activeTask) {
-                    const totalKw = activeTask.expanded_keywords?.length || 1;
-                    const currentIdx = activeTask.current_keyword_index || 0;
-                    const progress = activeTask.status === 'Pending' ? 0 :
-                        Math.round((currentIdx / totalKw) * 100);
+                const activeTask = _activeTaskId
+                    ? (data.tasks || []).find(t => t.id === _activeTaskId)
+                    : null;
 
-                    const currentKeyword = activeTask.expanded_keywords?.[currentIdx] || activeTask.keyword;
+                if (activeTask) {
+                    const kws = _arr(activeTask.expanded_keywords);
+                    const totalKw = kws.length || 1;
+                    const currentIdx = _num(activeTask.current_keyword_index);
+                    const progress = activeTask.status === 'Pending' ? 0 : _calcProgress(currentIdx, totalKw);
+                    const currentKw = kws[currentIdx] || activeTask.keyword;
 
                     updateSearchStatus(
-                        `任务 #${activeTask.id}: ${activeTask.country} / ${activeTask.keyword}`,
-                        `正在处理第 ${currentIdx + 1}/${totalKw} 个关键词: 「${currentKeyword}」 | 发现 ${activeTask.found_websites || 0} 个网站, 新增 ${activeTask.new_companies || 0} 个公司`,
+                        `任务 #${activeTask.id}: ${_esc(activeTask.country)} / ${_esc(activeTask.keyword)}`,
+                        `正在处理第 ${Math.min(currentIdx + 1, totalKw)}/${totalKw} 个关键词: 「${_esc(currentKw)}」 | 发现 ${_num(activeTask.found_websites)} 个网站, 新增 ${_num(activeTask.new_companies)} 个公司`,
                         progress,
-                        activeTask.expanded_keywords || [],
+                        kws,
                         currentIdx
                     );
                 } else {
                     hideSearchStatus();
+                    _checkShouldPoll();
                 }
 
-                let html = '';
-                data.tasks.forEach(t => {
-                    const totalKw = t.expanded_keywords?.length || 1;
-                    const progress = t.status === 'Completed' ? 100 :
-                        t.status === 'Pending' ? 0 :
-                        Math.round(((t.current_keyword_index || 0) / totalKw) * 100);
+                // 每 6 次轮询（~18秒）刷新一次发现结果
+                if ((_pollTick._counter || 0) % 6 === 0) {
+                    loadDiscovered();
+                }
+                _pollTick._counter = (_pollTick._counter || 0) + 1;
 
-                    // 显示当前处理的关键词名称
-                    let keywordLabel = t.keyword;
-                    if (t.status === 'Running' && t.expanded_keywords?.length > 0) {
-                        const idx = t.current_keyword_index || 0;
-                        if (idx < t.expanded_keywords.length) {
-                            keywordLabel += ` → ${t.expanded_keywords[idx]}`;
-                        }
-                    }
+            } catch (err) {
+                console.error('轮询异常:', err);
+            }
+        }
+        _pollTick._counter = 0;
 
-                    html += `<tr>
-                        <td>#${t.id}</td>
-                        <td>${t.country}</td>
-                        <td class="small">${keywordLabel}</td>
-                        <td>${t.expanded_keywords?.length || '-'}</td>
-                        <td><span class="badge ${statusBadge[t.status] || 'bg-secondary'}">${t.status}</span></td>
-                        <td>${t.found_websites}</td>
-                        <td><strong>${t.new_companies}</strong></td>
-                        <td>
-                            <div class="progress" style="height: 6px;">
-                                <div class="progress-bar ${t.status === 'Completed' ? 'bg-success' : t.status === 'Failed' ? 'bg-danger' : 'bg-warning'}" style="width: ${progress}%"></div>
-                            </div>
-                            <small class="text-muted">${progress}%</small>
-                        </td>
-                        <td class="small">${t.created_at ? new Date(t.created_at).toLocaleString() : '-'}</td>
-                        <td>
-                            ${t.status === 'Paused' ? `<button class="btn btn-sm btn-outline-success" onclick="resumeTask(${t.id})"><i class="bi bi-play-fill"></i> 恢复</button>` : ''}
-                            ${t.status === 'Completed' ? `<button class="btn btn-sm btn-outline-danger" onclick="deleteTask(${t.id})"><i class="bi bi-trash"></i></button>` : ''}
-                            ${t.status === 'Failed' ? `<button class="btn btn-sm btn-outline-danger" onclick="deleteTask(${t.id})"><i class="bi bi-trash"></i></button>` : ''}
-                        </td>
-                    </tr>`;
-                });
-                tbody.innerHTML = html;
+        // ═══════════════════════════════════════════
+        // 渲染任务表格（增量更新 future 可改为只更新变化行）
+        // ═══════════════════════════════════════════
+        function _renderTaskTable(data) {
+            const tbody = document.getElementById('taskTableBody');
+            const tasks = data.tasks || [];
 
-            } catch (err) { console.error('加载任务失败:', err); }
+            if (tasks.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="10" class="text-center text-muted py-4">暂无搜索任务</td></tr>';
+                return;
+            }
+
+            const statusBadge = {
+                'Pending': 'bg-secondary', 'Running': 'bg-warning text-dark',
+                'Completed': 'bg-success', 'Failed': 'bg-danger', 'Paused': 'bg-info text-dark'
+            };
+
+            let html = '';
+            tasks.forEach(t => {
+                const kws = _arr(t.expanded_keywords);
+                const totalKw = kws.length || 1;
+                const progress = t.status === 'Completed' ? 100
+                    : t.status === 'Pending' ? 0
+                    : _calcProgress(_num(t.current_keyword_index), totalKw);
+
+                let keywordLabel = _esc(t.keyword);
+                if (t.status === 'Running' && kws.length > 0) {
+                    const idx = Math.min(_num(t.current_keyword_index), kws.length - 1);
+                    if (idx >= 0) keywordLabel += ` → ${_esc(kws[idx])}`;
+                }
+
+                const now = t.created_at ? new Date(t.created_at).toLocaleString() : '-';
+
+                html += `<tr>
+                    <td>#${t.id}</td>
+                    <td>${_esc(t.country)}</td>
+                    <td class="small">${keywordLabel}</td>
+                    <td>${kws.length || '-'}</td>
+                    <td><span class="badge ${statusBadge[t.status] || 'bg-secondary'}">${_esc(t.status)}</span></td>
+                    <td>${_num(t.found_websites)}</td>
+                    <td><strong>${_num(t.new_companies)}</strong></td>
+                    <td>
+                        <div class="progress" style="height:6px">
+                            <div class="progress-bar ${t.status === 'Completed' ? 'bg-success' : t.status === 'Failed' ? 'bg-danger' : 'bg-warning'}" style="width:${progress}%"></div>
+                        </div>
+                        <small class="text-muted">${progress}%</small>
+                    </td>
+                    <td class="small">${now}</td>
+                    <td>
+                        ${t.status === 'Paused' ? `<button class="btn btn-sm btn-outline-success" onclick="resumeTask(${t.id})"><i class="bi bi-play-fill"></i> 恢复</button>` : ''}
+                        ${t.status === 'Completed' || t.status === 'Failed' ? `<button class="btn btn-sm btn-outline-danger" onclick="deleteTask(${t.id})"><i class="bi bi-trash"></i></button>` : ''}
+                    </td>
+                </tr>`;
+            });
+            tbody.innerHTML = html;
         }
 
+        // ──── loadTasks（手动刷新时调用） ────
+        async function loadTasks() {
+            try {
+                const resp = await _fetchWithTimeout('/api/discovery/tasks');
+                if (!resp.ok) return;
+                const data = await resp.json();
+                _activeTaskId = data.active_task_id ?? null;
+                _renderTaskTable(data);
+            } catch (err) {
+                console.error('加载任务失败:', err);
+            }
+        }
+
+        // ═══════════════════════════════════════════
+        // 恢复 / 删除任务
+        // ═══════════════════════════════════════════
         async function resumeTask(id) {
             try {
-                const resp = await fetch(`/api/discovery/tasks/${id}/resume`, { method: 'POST' });
-                const data = await resp.json();
-                loadTasks();
+                const resp = await _fetchWithTimeout(`/api/discovery/tasks/${id}/resume`, { method: 'POST' });
+                if (!resp.ok) {
+                    const errData = await resp.json().catch(() => ({}));
+                    throw new Error(errData.detail || '恢复失败');
+                }
+                await _refreshAll();
                 startPolling();
-            } catch (err) { alert('恢复失败: ' + err.message); }
+            } catch (err) {
+                alert('恢复失败: ' + err.message);
+            }
         }
 
         async function deleteTask(id) {
             if (!confirm('确定删除该任务？')) return;
             try {
-                await fetch(`/api/discovery/tasks/${id}`, { method: 'DELETE' });
-                loadTasks();
-            } catch (err) { alert('删除失败: ' + err.message); }
+                const resp = await _fetchWithTimeout(`/api/discovery/tasks/${id}`, { method: 'DELETE' });
+                if (!resp.ok) throw new Error('删除失败');
+                await _refreshAll();
+            } catch (err) {
+                alert('删除失败: ' + err.message);
+            }
         }
 
-        // ──── 加载发现结果 ────
+        // ═══════════════════════════════════════════
+        // 发现结果列表
+        // ═══════════════════════════════════════════
         async function loadDiscovered() {
             const search = document.getElementById('discSearch').value;
             const country = document.getElementById('discCountry').value;
@@ -380,52 +525,72 @@
             if (keyword) url += `&keyword=${encodeURIComponent(keyword)}`;
 
             try {
-                const resp = await fetch(url);
+                const resp = await _fetchWithTimeout(url);
+                if (!resp.ok) return;
                 const data = await resp.json();
-                document.getElementById('discoveredCount').textContent = `${data.total} 个`;
 
-                // 更新筛选
-                const countrySelect = document.getElementById('discCountry');
-                const curCountry = countrySelect.value;
-                countrySelect.innerHTML = '<option value="">所有国家</option>';
-                data.countries?.forEach(c => { countrySelect.innerHTML += `<option value="${c}" ${c === curCountry ? 'selected' : ''}>${c}</option>`; });
+                document.getElementById('discoveredCount').textContent = `${_num(data.total)} 个`;
 
-                const kwSelect = document.getElementById('discKeyword');
-                const curKw = kwSelect.value;
-                kwSelect.innerHTML = '<option value="">所有关键词</option>';
-                data.keywords?.forEach(k => { kwSelect.innerHTML += `<option value="${k}" ${k === curKw ? 'selected' : ''}>${k}</option>`; });
+                // 更新筛选下拉（保留用户当前选择）
+                _updateSelectOptions('discCountry', data.countries || []);
+                _updateSelectOptions('discKeyword', data.keywords || []);
 
                 const tbody = document.getElementById('discoveredTableBody');
-                if (!data.customers || data.customers.length === 0) {
+                const customers = data.customers || [];
+                if (customers.length === 0) {
                     tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4">暂无发现结果</td></tr>';
                     return;
                 }
 
                 const pBadge = { 'A': 'bg-danger', 'B': 'bg-warning text-dark', 'C': 'bg-info text-dark', 'D': 'bg-secondary' };
                 let html = '';
-                data.customers.forEach(c => {
-                    const sc = c.total_score >= 80 ? 'text-danger' : c.total_score >= 60 ? 'text-warning' : c.total_score >= 40 ? 'text-info' : 'text-muted';
+                customers.forEach(c => {
+                    const score = _num(c.total_score);
+                    const sc = score >= 80 ? 'text-danger' : score >= 60 ? 'text-warning' : score >= 40 ? 'text-info' : 'text-muted';
                     html += `<tr>
-                        <td><a href="/customer/${c.id}" class="text-decoration-none fw-medium">${c.company_name}</a></td>
-                        <td><span class="badge bg-light text-dark">${c.country || '-'}</span></td>
-                        <td class="small">${c.website || '-'}</td>
-                        <td><span class="badge bg-secondary">${c.email_count}</span></td>
-                        <td class="small text-muted">${c.discovery_keyword || '-'}</td>
-                        <td class="${sc} fw-bold">${c.total_score ?? '-'}</td>
-                        <td><span class="badge ${pBadge[c.priority] || 'bg-secondary'}">${c.priority || '-'}</span></td>
+                        <td><a href="/customer/${c.id}" class="text-decoration-none fw-medium">${_esc(c.company_name)}</a></td>
+                        <td><span class="badge bg-light text-dark">${_esc(c.country) || '-'}</span></td>
+                        <td class="small">${_esc(c.website) || '-'}</td>
+                        <td><span class="badge bg-secondary">${_num(c.email_count)}</span></td>
+                        <td class="small text-muted">${_esc(c.discovery_keyword) || '-'}</td>
+                        <td class="${sc} fw-bold">${score !== 0 || c.total_score !== null ? score : '-'}</td>
+                        <td><span class="badge ${pBadge[c.priority] || 'bg-secondary'}">${_esc(c.priority) || '-'}</span></td>
                         <td><a href="/customer/${c.id}" class="btn btn-sm btn-outline-primary"><i class="bi bi-eye"></i> 详情</a></td>
                     </tr>`;
                 });
                 tbody.innerHTML = html;
 
-            } catch (err) { console.error('加载发现结果失败:', err); }
+            } catch (err) {
+                console.error('加载发现结果失败:', err);
+            }
         }
 
-        // ──── 页面初始化 ────
+        // ──── 更新下拉框选项（保留用户选择） ────
+        function _updateSelectOptions(selectId, newOptions) {
+            const sel = document.getElementById(selectId);
+            const currentVal = sel.value;
+            sel.innerHTML = '<option value="">' + (selectId === 'discCountry' ? '所有国家' : '所有关键词') + '</option>';
+            (newOptions || []).forEach(opt => {
+                const o = document.createElement('option');
+                o.value = opt;
+                o.textContent = opt;
+                if (opt === currentVal) o.selected = true;
+                sel.appendChild(o);
+            });
+        }
+
+        // ═══════════════════════════════════════════
+        // 统一刷新（任务+发现）
+        // ═══════════════════════════════════════════
+        async function _refreshAll() {
+            await Promise.all([loadTasks(), loadDiscovered()]);
+        }
+
+        // ═══════════════════════════════════════════
+        // 页面初始化
+        // ═══════════════════════════════════════════
         document.addEventListener('DOMContentLoaded', () => {
-            loadTasks();
-            loadDiscovered();
-            // 自动轮询（3秒间隔检测任务状态）
+            _refreshAll();
             startPolling();
         });
     </script>
