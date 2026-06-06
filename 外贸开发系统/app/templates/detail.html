@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>客户详情 - AI Trade Customer Analyzer</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.2/font/bootstrap-icons.css" rel="stylesheet">
+    <link href="/static/css/style.css" rel="stylesheet">
+</head>
+<body>
+
+    <nav class="navbar navbar-dark bg-primary">
+        <div class="container-fluid">
+            <a class="navbar-brand d-flex align-items-center" href="/">
+                <i class="bi bi-arrow-left me-2"></i>
+                <span class="fw-bold">返回列表</span>
+            </a>
+            <span class="navbar-text text-white" id="pageTitle">客户详情</span>
+        </div>
+    </nav>
+
+    <div class="container-fluid mt-4">
+
+        <div id="loadingSpinner" class="text-center py-5">
+            <div class="spinner-border text-primary" role="status"><span class="visually-hidden">加载中...</span></div>
+            <p class="mt-2 text-muted">正在加载客户数据...</p>
+        </div>
+
+        <div id="mainContent" class="d-none">
+
+            <div id="analyzingBanner" class="d-none alert alert-warning mb-3">
+                <i class="bi bi-hourglass-split"></i> <span id="analyzingText">正在分析中...</span>
+            </div>
+
+            <!-- 基本信息 -->
+            <div class="card border-0 shadow-sm mb-4">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                            <h3 id="companyName" class="mb-2"></h3>
+                            <p class="text-muted mb-1">
+                                <i class="bi bi-globe2"></i> <span id="country"></span>
+                                &nbsp;&nbsp;<i class="bi bi-link-45deg"></i> <a id="website" target="_blank"></a>
+                                &nbsp;&nbsp;<span id="discoverySourceBadge"></span>
+                            </p>
+                            <p class="text-muted small mb-0" id="discoveryInfo"></p>
+                        </div>
+                        <div class="text-end">
+                            <h2 id="scoreDisplay" class="mb-1"></h2>
+                            <span id="priorityBadge"></span>
+                            <span id="companyTypeBadge" class="badge bg-info ms-1"></span>
+                        </div>
+                    </div>
+                    <div class="mt-2"><span class="text-muted small" id="aiSummary"></span></div>
+                </div>
+            </div>
+
+            <!-- 操作按钮 -->
+            <div class="d-flex gap-2 mb-4">
+                <button class="btn btn-success" onclick="analyzeCustomer()" id="btnAnalyze"><i class="bi bi-lightning"></i> 分析此客户</button>
+                <button class="btn btn-danger" onclick="stopAndBack()" id="btnStopDetail" style="display:none;"><i class="bi bi-stop-circle"></i> 停止并返回</button>
+                <button class="btn btn-outline-secondary" onclick="window.location.href='/'"><i class="bi bi-arrow-left"></i> 返回列表</button>
+            </div>
+
+            <div class="row g-4">
+
+                <!-- 评分明细 -->
+                <div class="col-md-6">
+                    <div class="card border-0 shadow-sm h-100">
+                        <div class="card-header bg-white"><h6 class="mb-0"><i class="bi bi-bar-chart"></i> 评分明细</h6></div>
+                        <div class="card-body" id="scoreDetailContainer"><p class="text-muted small">尚未评分</p></div>
+                    </div>
+                </div>
+
+                <!-- 邮箱 -->
+                <div class="col-md-6">
+                    <div class="card border-0 shadow-sm h-100">
+                        <div class="card-header bg-white"><h6 class="mb-0"><i class="bi bi-envelope"></i> 提取邮箱</h6></div>
+                        <div class="card-body" id="emailsContainer"><p class="text-muted small">暂无邮箱数据</p></div>
+                    </div>
+                </div>
+
+                <!-- 关键词 -->
+                <div class="col-md-6">
+                    <div class="card border-0 shadow-sm h-100">
+                        <div class="card-header bg-white"><h6 class="mb-0"><i class="bi bi-tags"></i> 关键词分析</h6></div>
+                        <div class="card-body" id="keywordsContainer"><p class="text-muted small">暂无关键词数据</p></div>
+                    </div>
+                </div>
+
+                <!-- AI分析 -->
+                <div class="col-md-6">
+                    <div class="card border-0 shadow-sm h-100">
+                        <div class="card-header bg-white"><h6 class="mb-0"><i class="bi bi-robot"></i> AI分析结果</h6></div>
+                        <div class="card-body" id="aiResultContainer"><p class="text-muted small">尚未进行AI分析</p></div>
+                    </div>
+                </div>
+
+                <!-- 开发建议 -->
+                <div class="col-md-6">
+                    <div class="card border-0 shadow-sm h-100">
+                        <div class="card-header bg-white"><h6 class="mb-0"><i class="bi bi-bullseye"></i> 开发建议</h6></div>
+                        <div class="card-body" id="salesHookContainer"><p class="text-muted small">暂无开发建议</p></div>
+                    </div>
+                </div>
+
+                <!-- 项目信息 -->
+                <div class="col-md-6">
+                    <div class="card border-0 shadow-sm h-100">
+                        <div class="card-header bg-white"><h6 class="mb-0"><i class="bi bi-folder"></i> 识别项目</h6></div>
+                        <div class="card-body" id="projectContainer"><p class="text-muted small">暂无项目信息</p></div>
+                    </div>
+                </div>
+
+                <!-- 官网内容 -->
+                <div class="col-12">
+                    <div class="card border-0 shadow-sm">
+                        <div class="card-header bg-white d-flex justify-content-between">
+                            <h6 class="mb-0"><i class="bi bi-file-text"></i> 官网内容摘要</h6>
+                            <span class="text-muted small" id="textLength"></span>
+                        </div>
+                        <div class="card-body" style="max-height: 400px; overflow-y: auto;">
+                            <pre id="websiteText" class="mb-0" style="white-space: pre-wrap; font-family: inherit; font-size: 0.875rem;"></pre>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+
+    <script>
+        const customerId = window.location.pathname.split('/').pop();
+        let detailPollTimer = null;
+
+        async function loadDetail() {
+            try {
+                const resp = await fetch(`/api/customers/${customerId}`);
+                if (!resp.ok) throw new Error('客户不存在');
+                const c = await resp.json();
+                renderDetail(c);
+                if (c.is_analyzing) { showAnalyzingBanner(); if (!detailPollTimer) detailPollTimer = setInterval(pollDetail, 2000); }
+            } catch (err) {
+                document.getElementById('loadingSpinner').innerHTML = `<div class="alert alert-danger"><i class="bi bi-exclamation-triangle"></i> 加载失败: ${err.message}</div>`;
+            }
+        }
+
+        async function pollDetail() {
+            try {
+                const resp = await fetch(`/api/customers/${customerId}`);
+                const c = await resp.json();
+                if (!c.is_analyzing) { hideAnalyzingBanner(); clearInterval(detailPollTimer); detailPollTimer = null; renderDetail(c); }
+            } catch (err) { console.error('轮询失败:', err); }
+        }
+
+        function showAnalyzingBanner() {
+            document.getElementById('analyzingBanner').classList.remove('d-none');
+            document.getElementById('analyzingText').textContent = '正在分析该客户，请稍候...';
+            document.getElementById('btnAnalyze').disabled = true;
+            document.getElementById('btnAnalyze').innerHTML = '<span class="spinner-border spinner-border-sm"></span> 分析中...';
+            document.getElementById('btnStopDetail').style.display = 'inline-block';
+        }
+
+        function hideAnalyzingBanner() {
+            document.getElementById('analyzingBanner').classList.add('d-none');
+            document.getElementById('btnAnalyze').disabled = false;
+            document.getElementById('btnAnalyze').innerHTML = '<i class="bi bi-lightning"></i> 分析此客户';
+            document.getElementById('btnStopDetail').style.display = 'none';
+        }
+
+        function renderDetail(c) {
+            document.getElementById('loadingSpinner').classList.add('d-none');
+            document.getElementById('mainContent').classList.remove('d-none');
+
+            document.getElementById('companyName').textContent = c.company_name;
+            document.getElementById('country').textContent = c.country || '-';
+            const siteEl = document.getElementById('website');
+            if (c.website) { siteEl.href = 'https://' + c.website; siteEl.textContent = c.website; } else { siteEl.textContent = '-'; }
+
+            // 发现来源
+            const sourceBadge = document.getElementById('discoverySourceBadge');
+            if (c.discovery_source === 'Google') {
+                sourceBadge.innerHTML = '<span class="badge bg-info"><i class="bi bi-google"></i> Google发现</span>';
+            } else {
+                sourceBadge.innerHTML = '<span class="badge bg-secondary"><i class="bi bi-upload"></i> 手动导入</span>';
+            }
+            const discInfo = document.getElementById('discoveryInfo');
+            if (c.discovery_keyword) {
+                discInfo.textContent = `发现关键词: ${c.discovery_keyword}${c.first_found_at ? ' | 发现时间: ' + new Date(c.first_found_at).toLocaleString() : ''}`;
+            } else {
+                discInfo.textContent = c.first_found_at ? `导入时间: ${new Date(c.first_found_at).toLocaleString()}` : '';
+            }
+
+            // 评分
+            const scoreEl = document.getElementById('scoreDisplay');
+            if (c.total_score !== null && c.total_score !== undefined) {
+                const sc = c.total_score >= 80 ? 'text-danger' : c.total_score >= 60 ? 'text-warning' : c.total_score >= 40 ? 'text-info' : 'text-muted';
+                scoreEl.className = `mb-1 fw-bold ${sc}`;
+                scoreEl.textContent = `${c.total_score} 分`;
+            } else { scoreEl.className = 'mb-1 text-muted'; scoreEl.textContent = '未评分'; }
+
+            const pBadge = { 'A': 'bg-danger', 'B': 'bg-warning text-dark', 'C': 'bg-info text-dark', 'D': 'bg-secondary' };
+            const pb = document.getElementById('priorityBadge');
+            if (c.priority && c.priority !== '-') { pb.className = `badge ${pBadge[c.priority] || 'bg-secondary'}`; pb.textContent = `优先级 ${c.priority}`; }
+            else { pb.className = 'badge bg-secondary'; pb.textContent = '未评级'; }
+
+            const tb = document.getElementById('companyTypeBadge');
+            if (c.company_type) { tb.textContent = c.company_type; } else { tb.classList.add('d-none'); }
+
+            document.getElementById('aiSummary').textContent = c.ai_summary || '暂无AI摘要';
+
+            // 评分明细
+            renderScoreDetail(c);
+            // 邮箱
+            const ec = document.getElementById('emailsContainer');
+            if (c.emails && c.emails.length > 0) {
+                let h = '<div class="d-flex flex-wrap gap-2">';
+                c.emails.forEach(e => { h += `<span class="badge bg-light text-dark border p-2"><i class="bi bi-envelope"></i> ${e}</span>`; });
+                h += '</div>'; ec.innerHTML = h;
+            } else { ec.innerHTML = '<p class="text-muted small mb-0">暂未提取到邮箱</p>'; }
+
+            // 关键词
+            const kc = document.getElementById('keywordsContainer');
+            let kh = '<strong class="text-success">正向关键词：</strong>';
+            const pk = Object.keys(c.positive_keywords || {});
+            if (pk.length > 0) {
+                kh += '<div class="d-flex flex-wrap gap-1 mt-1 mb-3">';
+                for (const [kw, cnt] of Object.entries(c.positive_keywords)) kh += `<span class="badge bg-success">${kw} (${cnt})</span>`;
+                kh += '</div>';
+            } else { kh += '<p class="text-muted small">未命中正向关键词</p>'; }
+            kh += '<strong class="text-danger">负向关键词：</strong>';
+            const nk = Object.keys(c.negative_keywords || {});
+            if (nk.length > 0) {
+                kh += '<div class="d-flex flex-wrap gap-1 mt-1">';
+                for (const [kw, cnt] of Object.entries(c.negative_keywords)) kh += `<span class="badge bg-danger">${kw} (${cnt})</span>`;
+                kh += '</div>';
+            } else { kh += '<p class="text-muted small">未命中负向关键词</p>'; }
+            kc.innerHTML = kh;
+
+            // AI结果
+            const ac = document.getElementById('aiResultContainer');
+            if (!c.ai_raw || Object.keys(c.ai_raw).length === 0) { ac.innerHTML = '<p class="text-muted small mb-0">尚未进行AI分析</p>'; }
+            else {
+                const ai = c.ai_raw;
+                ac.innerHTML = `<div class="mb-2"><strong>公司类型：</strong> <span class="badge bg-info">${ai.company_type || '未知'}</span></div>
+                    <div class="mb-0"><strong>分析原因：</strong><p class="text-muted small mt-1">${ai.analysis_reason || '暂无分析'}</p></div>`;
+            }
+
+            // 开发建议
+            const hc = document.getElementById('salesHookContainer');
+            let hh = '';
+            if (c.sales_hook) hh += `<div class="mb-3"><strong class="text-success"><i class="bi bi-bullseye"></i> 开发切入点：</strong><p class="mt-1">${c.sales_hook}</p></div>`;
+            if (c.target_position) hh += `<div><strong class="text-primary"><i class="bi bi-person-badge"></i> 推荐联系职位：</strong><p class="mt-1">${c.target_position}</p></div>`;
+            hc.innerHTML = hh || '<p class="text-muted small mb-0">暂无开发建议</p>';
+
+            // 项目信息
+            const pc = document.getElementById('projectContainer');
+            pc.innerHTML = c.identified_projects ? `<p class="mb-0">${c.identified_projects}</p>` : '<p class="text-muted small mb-0">暂无项目信息</p>';
+
+            // 官网文本
+            const te = document.getElementById('websiteText');
+            if (c.website_text) { te.textContent = c.website_text; document.getElementById('textLength').textContent = `${c.website_text.length} 字符`; }
+            else { te.textContent = '暂无官网内容'; document.getElementById('textLength').textContent = '0 字符'; }
+
+            document.getElementById('pageTitle').textContent = c.company_name;
+        }
+
+        function renderScoreDetail(c) {
+            const container = document.getElementById('scoreDetailContainer');
+            if (c.industry_score === null || c.industry_score === undefined) {
+                container.innerHTML = '<p class="text-muted small mb-0">尚未评分（分析完成后由规则引擎自动评分）</p>';
+                return;
+            }
+            const total = c.total_score || 0;
+            const barColor = total >= 80 ? 'bg-danger' : total >= 60 ? 'bg-warning' : total >= 40 ? 'bg-info' : 'bg-secondary';
+            const badgeColors = { 'A': 'bg-danger', 'B': 'bg-warning text-dark', 'C': 'bg-info text-dark', 'D': 'bg-secondary' };
+            container.innerHTML = `
+                <div class="mb-2"><div class="d-flex justify-content-between"><small>行业匹配度</small><small class="fw-bold">${c.industry_score}/30</small></div>
+                    <div class="progress" style="height:8px"><div class="progress-bar bg-success" style="width:${(c.industry_score/30*100).toFixed(0)}%"></div></div></div>
+                <div class="mb-2"><div class="d-flex justify-content-between"><small>项目匹配度</small><small class="fw-bold">${c.project_score}/25</small></div>
+                    <div class="progress" style="height:8px"><div class="progress-bar bg-info" style="width:${(c.project_score/25*100).toFixed(0)}%"></div></div></div>
+                <div class="mb-2"><div class="d-flex justify-content-between"><small>公司类型</small><small class="fw-bold">${c.company_type_score}/20</small></div>
+                    <div class="progress" style="height:8px"><div class="progress-bar bg-primary" style="width:${(c.company_type_score/20*100).toFixed(0)}%"></div></div></div>
+                <div class="mb-2"><div class="d-flex justify-content-between"><small>国家优先级</small><small class="fw-bold">${c.country_score}/15</small></div>
+                    <div class="progress" style="height:8px"><div class="progress-bar bg-warning" style="width:${(c.country_score/15*100).toFixed(0)}%"></div></div></div>
+                <div class="mb-3"><div class="d-flex justify-content-between"><small>联系方式</small><small class="fw-bold">${c.contact_score}/10</small></div>
+                    <div class="progress" style="height:8px"><div class="progress-bar bg-secondary" style="width:${(c.contact_score/10*100).toFixed(0)}%"></div></div></div>
+                <hr class="my-2">
+                <div class="d-flex justify-content-between align-items-center"><strong>总分</strong><h4 class="mb-0 ${barColor}">${total}</h4></div>
+                <div class="d-flex justify-content-between align-items-center mt-1"><small>优先级</small><span class="badge ${badgeColors[c.priority] || 'bg-secondary'}">${c.priority || '-'}</span></div>`;
+        }
+
+        async function analyzeCustomer() {
+            if (!confirm('确定要分析该客户吗？')) return;
+            showAnalyzingBanner();
+            try {
+                const resp = await fetch(`/api/analyze/${customerId}`, { method: 'POST' });
+                const data = await resp.json();
+                if (!resp.ok) throw new Error(data.detail || '分析失败');
+                setTimeout(async () => { await loadDetail(); hideAnalyzingBanner(); }, 1000);
+            } catch (err) { hideAnalyzingBanner(); alert('分析失败: ' + err.message); }
+        }
+
+        async function stopAndBack() {
+            try { await fetch('/api/stop-analysis', { method: 'POST' }); } catch (err) {}
+            window.location.href = '/';
+        }
+
+        document.addEventListener('DOMContentLoaded', loadDetail);
+    </script>
+
+</body>
+</html>
