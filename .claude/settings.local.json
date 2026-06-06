@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 *)",
+      "Bash(lsof -ti:8000)",
+      "Bash(xargs kill -9)",
+      "Read(//dev/**)",
+      "Read(//Users/khalillabamba/**)",
+      "Bash(git init *)",
+      "Bash(git remote *)",
+      "Bash(git add *)"
+    ]
+  }
+}

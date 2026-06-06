@@ -1,0 +1,611 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>客户发现 - AI Trade Customer Analyzer</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.2/font/bootstrap-icons.css" rel="stylesheet">
+    <link href="/static/css/style.css" rel="stylesheet">
+</head>
+<body>
+
+    <nav class="navbar navbar-dark bg-primary">
+        <div class="container-fluid">
+            <a class="navbar-brand d-flex align-items-center" href="/">
+                <i class="bi bi-robot me-2"></i>
+                <span class="fw-bold">AI Trade Customer Analyzer V2.0</span>
+            </a>
+            <div class="d-flex align-items-center">
+                <a href="/" class="btn btn-sm btn-outline-light me-2"><i class="bi bi-people"></i> 客户列表</a>
+                <a href="/discovery" class="btn btn-sm btn-outline-light me-2 active"><i class="bi bi-search"></i> 客户发现</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid mt-4">
+
+        <!-- 新建搜索任务 -->
+        <div class="card border-0 shadow-sm mb-4">
+            <div class="card-header bg-white">
+                <h5 class="mb-0"><i class="bi bi-search"></i> 客户发现（Google搜索 + AI分析）</h5>
+            </div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-4">
+                        <label class="form-label fw-medium">Country <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="discoveryCountry" placeholder="例如: Saudi Arabia" value="Saudi Arabia">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label fw-medium">Keyword <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="discoveryKeyword" placeholder="例如: wastewater contractor" value="wastewater contractor">
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label fw-medium">Search Depth</label>
+                        <input type="number" class="form-control" id="discoveryDepth" value="50" min="10" max="200">
+                    </div>
+                    <div class="col-md-2 d-flex align-items-end">
+                        <button class="btn btn-primary w-100" onclick="startSearch()" id="btnStartSearch">
+                            <i class="bi bi-play-fill"></i> Start Search
+                        </button>
+                    </div>
+                </div>
+                <div class="row mt-3">
+                    <div class="col-12">
+                        <button class="btn btn-outline-info btn-sm" onclick="previewKeywords()" id="btnPreview">
+                            <i class="bi bi-magic"></i> 预览扩展关键词
+                        </button>
+                        <span id="previewResult" class="ms-2 small text-muted"></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 搜索状态提示（实时进度） -->
+        <div id="searchRunningBar" class="d-none alert alert-warning mb-3">
+            <div class="d-flex justify-content-between align-items-center">
+                <div class="d-flex align-items-center">
+                    <i class="bi bi-hourglass-split me-2"></i>
+                    <div>
+                        <strong id="searchStatusText">搜索任务进行中...</strong>
+                        <br>
+                        <small class="text-muted" id="searchProgressDetail">等待中...</small>
+                    </div>
+                </div>
+                <button class="btn btn-sm btn-outline-danger" onclick="stopSearchTask()"><i class="bi bi-stop-circle"></i> 停止任务</button>
+            </div>
+            <!-- 进度条 -->
+            <div class="progress mt-2" style="height: 8px;">
+                <div id="searchProgressBar" class="progress-bar progress-bar-striped progress-bar-animated bg-warning" style="width: 0%"></div>
+            </div>
+            <!-- 扩展关键词列表（折叠） -->
+            <div class="mt-2">
+                <button class="btn btn-sm btn-link p-0 text-decoration-none" type="button" data-bs-toggle="collapse" data-bs-target="#keywordListCollapse" aria-expanded="false">
+                    <i class="bi bi-list-ul"></i> 查看扩展关键词列表 <i class="bi bi-chevron-down small"></i>
+                </button>
+                <div class="collapse mt-1" id="keywordListCollapse">
+                    <div id="keywordListContainer" class="d-flex flex-wrap gap-1"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 搜索任务列表 -->
+        <div class="card border-0 shadow-sm mb-4">
+            <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                <span class="fw-bold"><i class="bi bi-list-task"></i> 搜索任务历史</span>
+                <button class="btn btn-sm btn-outline-primary" onclick="loadTasks()"><i class="bi bi-arrow-clockwise"></i> 刷新</button>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>ID</th>
+                                <th>国家</th>
+                                <th>关键词</th>
+                                <th>扩展关键词数</th>
+                                <th>状态</th>
+                                <th>发现网站</th>
+                                <th>新增公司</th>
+                                <th>进度</th>
+                                <th>时间</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="taskTableBody">
+                            <tr><td colspan="10" class="text-center text-muted py-4">暂无搜索任务</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- 发现结果列表 -->
+        <div class="card border-0 shadow-sm">
+            <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                <span class="fw-bold"><i class="bi bi-globe"></i> Google发现的公司</span>
+                <span class="badge bg-info" id="discoveredCount">0 个</span>
+            </div>
+            <div class="card-body">
+                <div class="row g-2 mb-3">
+                    <div class="col-md-4">
+                        <input type="text" class="form-control form-control-sm" id="discSearch" placeholder="搜索..." oninput="loadDiscovered()">
+                    </div>
+                    <div class="col-md-3">
+                        <select class="form-select form-select-sm" id="discCountry" onchange="loadDiscovered()">
+                            <option value="">所有国家</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <select class="form-select form-select-sm" id="discPriority" onchange="loadDiscovered()">
+                            <option value="">所有优先级</option>
+                            <option value="A">A级</option><option value="B">B级</option>
+                            <option value="C">C级</option><option value="D">D级</option>
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <select class="form-select form-select-sm" id="discKeyword" onchange="loadDiscovered()">
+                            <option value="">所有关键词</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-hover table-sm mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Company</th>
+                                <th>Country</th>
+                                <th>Website</th>
+                                <th>Emails</th>
+                                <th>发现关键词</th>
+                                <th>评分</th>
+                                <th>优先级</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="discoveredTableBody">
+                            <tr><td colspan="8" class="text-center text-muted py-4">暂无发现结果，请先运行搜索任务</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+
+    <script>
+        // ═══════════════════════════════════════════
+        // 轮询管理（单例，避免多个 setInterval 并存）
+        // ═══════════════════════════════════════════
+        let _pollTimer = null;
+        let _activeTaskId = null;        // 后端标记的当前活跃任务ID
+        let _lastActiveTaskKey = '';      // 用于判断activeTask是否变化，避免无效DOM重建
+
+        function startPolling() {
+            if (_pollTimer) return;        // 已存在则不重复创建
+            _pollTimer = setInterval(_pollTick, 3000);
+        }
+
+        function clearPolling() {
+            if (_pollTimer) {
+                clearInterval(_pollTimer);
+                _pollTimer = null;
+            }
+        }
+
+        // 页面关闭/刷新时清理
+        window.addEventListener('beforeunload', clearPolling);
+
+        // 每秒检查是否还有活跃任务，无则停轮询
+        function _checkShouldPoll() {
+            if (_activeTaskId === null && _pollTimer) {
+                clearPolling();
+            }
+        }
+
+        // ──── 带超时的 fetch 封装 ────
+        async function _fetchWithTimeout(url, options = {}, timeout = 15000) {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), timeout);
+            try {
+                const resp = await fetch(url, { ...options, signal: controller.signal });
+                clearTimeout(timer);
+                return resp;
+            } catch (err) {
+                clearTimeout(timer);
+                if (err.name === 'AbortError') {
+                    throw new Error('请求超时');
+                }
+                throw err;
+            }
+        }
+
+        // ──── 安全转义（防止 HTML 注入） ────
+        function _esc(str) {
+            if (str === null || str === undefined) return '';
+            const d = document.createElement('div');
+            d.textContent = String(str);
+            return d.innerHTML;
+        }
+
+        // ──── 安全的数字兜底 ────
+        function _num(val, fallback = 0) {
+            const n = Number(val);
+            return Number.isFinite(n) ? n : fallback;
+        }
+
+        // ──── 安全的数组兜底 ────
+        function _arr(val) {
+            return Array.isArray(val) ? val : [];
+        }
+
+        // ──── 安全的进度计算 ────
+        function _calcProgress(currentIdx, totalKw) {
+            const idx = _num(currentIdx, 0);
+            const total = _num(totalKw, 1);
+            if (total <= 0) return 0;
+            const p = Math.round((idx / total) * 100);
+            return Math.min(Math.max(p, 0), 100);
+        }
+
+        // ═══════════════════════════════════════════
+        // 预览扩展关键词
+        // ═══════════════════════════════════════════
+        async function previewKeywords() {
+            const keyword = document.getElementById('discoveryKeyword').value.trim();
+            if (!keyword) { alert('请输入关键词'); return; }
+            const btn = document.getElementById('btnPreview');
+            btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+            document.getElementById('previewResult').textContent = '正在扩展...';
+            try {
+                const resp = await _fetchWithTimeout(`/api/discovery/expand-keywords?keyword=${encodeURIComponent(keyword)}`);
+                if (!resp.ok) throw new Error('服务器错误');
+                const data = await resp.json();
+                const kws = _arr(data.expanded_keywords);
+                document.getElementById('previewResult').textContent =
+                    kws.length > 0
+                        ? `扩展了 ${kws.length} 个关键词: ${kws.join(', ')}`
+                        : '扩展失败，请重试';
+            } catch (err) {
+                document.getElementById('previewResult').textContent = '扩展失败: ' + err.message;
+            } finally {
+                btn.disabled = false; btn.innerHTML = '<i class="bi bi-magic"></i> 预览扩展关键词';
+            }
+        }
+
+        // ═══════════════════════════════════════════
+        // 开始搜索
+        // ═══════════════════════════════════════════
+        async function startSearch() {
+            const country = document.getElementById('discoveryCountry').value.trim();
+            const keyword = document.getElementById('discoveryKeyword').value.trim();
+            const depth = document.getElementById('discoveryDepth').value || 50;
+
+            if (!country || !keyword) { alert('请输入国家和关键词'); return; }
+
+            const btn = document.getElementById('btnStartSearch');
+            btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 启动中...';
+
+            try {
+                const resp = await _fetchWithTimeout(
+                    `/api/discovery/search-task?country=${encodeURIComponent(country)}&keyword=${encodeURIComponent(keyword)}&depth=${depth}`,
+                    { method: 'POST' }
+                );
+                if (!resp.ok) {
+                    const errData = await resp.json().catch(() => ({}));
+                    throw new Error(errData.detail || '创建任务失败');
+                }
+                await _refreshAll();
+                startPolling();
+            } catch (err) {
+                alert('启动失败: ' + err.message);
+            } finally {
+                btn.disabled = false; btn.innerHTML = '<i class="bi bi-play-fill"></i> Start Search';
+            }
+        }
+
+        // ═══════════════════════════════════════════
+        // 停止搜索任务
+        // ═══════════════════════════════════════════
+        async function stopSearchTask() {
+            const btn = document.querySelector('#searchRunningBar .btn-outline-danger');
+            if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 停止中...'; }
+            try {
+                const resp = await _fetchWithTimeout('/api/stop-analysis', { method: 'POST' });
+                const data = await resp.json();
+                // 显示停止信号已发送的提示
+                document.getElementById('searchStatusText').textContent = '⏳ 正在停止...';
+                document.getElementById('searchProgressDetail').textContent = data.message || '正在等待当前任务完成';
+                if (btn) { btn.disabled = true; btn.innerHTML = '<i class="bi bi-stop-circle"></i> 停止中...'; }
+                // 3秒后自动刷新状态
+                setTimeout(async () => {
+                    await _refreshAll();
+                    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-stop-circle"></i> 停止任务'; }
+                }, 3000);
+            } catch (err) {
+                console.error('停止失败:', err);
+                alert('发送停止信号失败: ' + err.message);
+                if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-stop-circle"></i> 停止任务'; }
+            }
+        }
+
+        // ═══════════════════════════════════════════
+        // 更新搜索状态栏（仅当 activeTask 变化时全量重建关键词列表）
+        // ═══════════════════════════════════════════
+        function updateSearchStatus(title, detail, progress, keywords, currentIdx) {
+            // 文本节点直接更新
+            document.getElementById('searchStatusText').textContent = title;
+            document.getElementById('searchProgressDetail').textContent = detail;
+            const bar = document.getElementById('searchProgressBar');
+            const pct = Math.min(_num(progress), 100);
+            bar.style.width = pct + '%';
+            bar.textContent = pct + '%';
+            document.getElementById('searchRunningBar').classList.remove('d-none');
+
+            // 关键词列表：只在 activeTask 变化时重建
+            const container = document.getElementById('keywordListContainer');
+            const newKey = JSON.stringify({ kws: keywords, idx: currentIdx });
+            if (newKey === container.dataset.lastKey) return;   // 无变化，跳过
+
+            container.dataset.lastKey = newKey;
+
+            const kws = _arr(keywords);
+            if (kws.length === 0) {
+                container.innerHTML = '<span class="text-muted small">暂无关键词</span>';
+                return;
+            }
+
+            let html = '';
+            const idx = _num(currentIdx);
+            kws.forEach((kw, i) => {
+                let cls, icon;
+                if (i < idx)       { cls = 'bg-success';       icon = '✅ '; }
+                else if (i === idx) { cls = 'bg-warning text-dark'; icon = '⏳ '; }
+                else               { cls = 'bg-light text-muted border'; icon = '⏸️ '; }
+                html += `<span class="badge ${cls}" style="font-weight:400">${icon}${_esc(kw)}</span>`;
+            });
+            container.innerHTML = html;
+        }
+
+        function hideSearchStatus() {
+            document.getElementById('searchRunningBar').classList.add('d-none');
+        }
+
+        // ═══════════════════════════════════════════
+        // 统一的轮询回调（单点更新）
+        // ═══════════════════════════════════════════
+        async function _pollTick() {
+            try {
+                const resp = await _fetchWithTimeout('/api/discovery/tasks');
+                if (!resp.ok) return;
+                const data = await resp.json();
+
+                // 更新活跃任务ID
+                _activeTaskId = data.active_task_id ?? null;
+
+                // 更新任务表格
+                _renderTaskTable(data);
+
+                // 更新状态栏
+                const activeTask = _activeTaskId
+                    ? (data.tasks || []).find(t => t.id === _activeTaskId)
+                    : null;
+
+                if (activeTask) {
+                    const kws = _arr(activeTask.expanded_keywords);
+                    const totalKw = kws.length || 1;
+                    const currentIdx = _num(activeTask.current_keyword_index);
+                    const progress = activeTask.status === 'Pending' ? 0 : _calcProgress(currentIdx, totalKw);
+                    const currentKw = kws[currentIdx] || activeTask.keyword;
+
+                    updateSearchStatus(
+                        `任务 #${activeTask.id}: ${_esc(activeTask.country)} / ${_esc(activeTask.keyword)}`,
+                        `正在处理第 ${Math.min(currentIdx + 1, totalKw)}/${totalKw} 个关键词: 「${_esc(currentKw)}」 | 发现 ${_num(activeTask.found_websites)} 个网站, 新增 ${_num(activeTask.new_companies)} 个公司`,
+                        progress,
+                        kws,
+                        currentIdx
+                    );
+                } else {
+                    hideSearchStatus();
+                    _checkShouldPoll();
+                }
+
+                // 每 6 次轮询（~18秒）刷新一次发现结果
+                if ((_pollTick._counter || 0) % 6 === 0) {
+                    loadDiscovered();
+                }
+                _pollTick._counter = (_pollTick._counter || 0) + 1;
+
+            } catch (err) {
+                console.error('轮询异常:', err);
+            }
+        }
+        _pollTick._counter = 0;
+
+        // ═══════════════════════════════════════════
+        // 渲染任务表格（增量更新 future 可改为只更新变化行）
+        // ═══════════════════════════════════════════
+        function _renderTaskTable(data) {
+            const tbody = document.getElementById('taskTableBody');
+            const tasks = data.tasks || [];
+
+            if (tasks.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="10" class="text-center text-muted py-4">暂无搜索任务</td></tr>';
+                return;
+            }
+
+            const statusBadge = {
+                'Pending': 'bg-secondary', 'Running': 'bg-warning text-dark',
+                'Completed': 'bg-success', 'Failed': 'bg-danger', 'Paused': 'bg-info text-dark'
+            };
+
+            let html = '';
+            tasks.forEach(t => {
+                const kws = _arr(t.expanded_keywords);
+                const totalKw = kws.length || 1;
+                const progress = t.status === 'Completed' ? 100
+                    : t.status === 'Pending' ? 0
+                    : _calcProgress(_num(t.current_keyword_index), totalKw);
+
+                let keywordLabel = _esc(t.keyword);
+                if (t.status === 'Running' && kws.length > 0) {
+                    const idx = Math.min(_num(t.current_keyword_index), kws.length - 1);
+                    if (idx >= 0) keywordLabel += ` → ${_esc(kws[idx])}`;
+                }
+
+                const now = t.created_at ? new Date(t.created_at).toLocaleString() : '-';
+
+                html += `<tr>
+                    <td>#${t.id}</td>
+                    <td>${_esc(t.country)}</td>
+                    <td class="small">${keywordLabel}</td>
+                    <td>${kws.length || '-'}</td>
+                    <td><span class="badge ${statusBadge[t.status] || 'bg-secondary'}">${_esc(t.status)}</span></td>
+                    <td>${_num(t.found_websites)}</td>
+                    <td><strong>${_num(t.new_companies)}</strong></td>
+                    <td>
+                        <div class="progress" style="height:6px">
+                            <div class="progress-bar ${t.status === 'Completed' ? 'bg-success' : t.status === 'Failed' ? 'bg-danger' : 'bg-warning'}" style="width:${progress}%"></div>
+                        </div>
+                        <small class="text-muted">${progress}%</small>
+                    </td>
+                    <td class="small">${now}</td>
+                    <td>
+                        ${t.status === 'Paused' ? `<button class="btn btn-sm btn-outline-success" onclick="resumeTask(${t.id})"><i class="bi bi-play-fill"></i> 恢复</button>` : ''}
+                        ${t.status === 'Completed' || t.status === 'Failed' ? `<button class="btn btn-sm btn-outline-danger" onclick="deleteTask(${t.id})"><i class="bi bi-trash"></i></button>` : ''}
+                    </td>
+                </tr>`;
+            });
+            tbody.innerHTML = html;
+        }
+
+        // ──── loadTasks（手动刷新时调用） ────
+        async function loadTasks() {
+            try {
+                const resp = await _fetchWithTimeout('/api/discovery/tasks');
+                if (!resp.ok) return;
+                const data = await resp.json();
+                _activeTaskId = data.active_task_id ?? null;
+                _renderTaskTable(data);
+            } catch (err) {
+                console.error('加载任务失败:', err);
+            }
+        }
+
+        // ═══════════════════════════════════════════
+        // 恢复 / 删除任务
+        // ═══════════════════════════════════════════
+        async function resumeTask(id) {
+            try {
+                const resp = await _fetchWithTimeout(`/api/discovery/tasks/${id}/resume`, { method: 'POST' });
+                if (!resp.ok) {
+                    const errData = await resp.json().catch(() => ({}));
+                    throw new Error(errData.detail || '恢复失败');
+                }
+                await _refreshAll();
+                startPolling();
+            } catch (err) {
+                alert('恢复失败: ' + err.message);
+            }
+        }
+
+        async function deleteTask(id) {
+            if (!confirm('确定删除该任务？')) return;
+            try {
+                const resp = await _fetchWithTimeout(`/api/discovery/tasks/${id}`, { method: 'DELETE' });
+                if (!resp.ok) throw new Error('删除失败');
+                await _refreshAll();
+            } catch (err) {
+                alert('删除失败: ' + err.message);
+            }
+        }
+
+        // ═══════════════════════════════════════════
+        // 发现结果列表
+        // ═══════════════════════════════════════════
+        async function loadDiscovered() {
+            const search = document.getElementById('discSearch').value;
+            const country = document.getElementById('discCountry').value;
+            const priority = document.getElementById('discPriority').value;
+            const keyword = document.getElementById('discKeyword').value;
+
+            let url = '/api/discovery/discovered-customers?sort_by_score=desc';
+            if (search) url += `&search=${encodeURIComponent(search)}`;
+            if (country) url += `&country=${encodeURIComponent(country)}`;
+            if (priority) url += `&priority=${encodeURIComponent(priority)}`;
+            if (keyword) url += `&keyword=${encodeURIComponent(keyword)}`;
+
+            try {
+                const resp = await _fetchWithTimeout(url);
+                if (!resp.ok) return;
+                const data = await resp.json();
+
+                document.getElementById('discoveredCount').textContent = `${_num(data.total)} 个`;
+
+                // 更新筛选下拉（保留用户当前选择）
+                _updateSelectOptions('discCountry', data.countries || []);
+                _updateSelectOptions('discKeyword', data.keywords || []);
+
+                const tbody = document.getElementById('discoveredTableBody');
+                const customers = data.customers || [];
+                if (customers.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4">暂无发现结果</td></tr>';
+                    return;
+                }
+
+                const pBadge = { 'A': 'bg-danger', 'B': 'bg-warning text-dark', 'C': 'bg-info text-dark', 'D': 'bg-secondary' };
+                let html = '';
+                customers.forEach(c => {
+                    const score = _num(c.total_score);
+                    const sc = score >= 80 ? 'text-danger' : score >= 60 ? 'text-warning' : score >= 40 ? 'text-info' : 'text-muted';
+                    html += `<tr>
+                        <td><a href="/customer/${c.id}" class="text-decoration-none fw-medium">${_esc(c.company_name)}</a></td>
+                        <td><span class="badge bg-light text-dark">${_esc(c.country) || '-'}</span></td>
+                        <td class="small">${_esc(c.website) || '-'}</td>
+                        <td><span class="badge bg-secondary">${_num(c.email_count)}</span></td>
+                        <td class="small text-muted">${_esc(c.discovery_keyword) || '-'}</td>
+                        <td class="${sc} fw-bold">${score !== 0 || c.total_score !== null ? score : '-'}</td>
+                        <td><span class="badge ${pBadge[c.priority] || 'bg-secondary'}">${_esc(c.priority) || '-'}</span></td>
+                        <td><a href="/customer/${c.id}" class="btn btn-sm btn-outline-primary"><i class="bi bi-eye"></i> 详情</a></td>
+                    </tr>`;
+                });
+                tbody.innerHTML = html;
+
+            } catch (err) {
+                console.error('加载发现结果失败:', err);
+            }
+        }
+
+        // ──── 更新下拉框选项（保留用户选择） ────
+        function _updateSelectOptions(selectId, newOptions) {
+            const sel = document.getElementById(selectId);
+            const currentVal = sel.value;
+            sel.innerHTML = '<option value="">' + (selectId === 'discCountry' ? '所有国家' : '所有关键词') + '</option>';
+            (newOptions || []).forEach(opt => {
+                const o = document.createElement('option');
+                o.value = opt;
+                o.textContent = opt;
+                if (opt === currentVal) o.selected = true;
+                sel.appendChild(o);
+            });
+        }
+
+        // ═══════════════════════════════════════════
+        // 统一刷新（任务+发现）
+        // ═══════════════════════════════════════════
+        async function _refreshAll() {
+            await Promise.all([loadTasks(), loadDiscovered()]);
+        }
+
+        // ═══════════════════════════════════════════
+        // 页面初始化
+        // ═══════════════════════════════════════════
+        document.addEventListener('DOMContentLoaded', () => {
+            _refreshAll();
+            startPolling();
+        });
+    </script>
+
+</body>
+</html>

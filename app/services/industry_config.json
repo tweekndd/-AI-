@@ -1,0 +1,75 @@
+{
+    "version": "2.0",
+    "description": "行业配置中心，调整评分规则无需修改代码",
+
+    "scoring": {
+        "industry_match": {
+            "max_score": 30,
+            "keywords": {
+                "wastewater": 5,
+                "water treatment": 4,
+                "sewage": 5,
+                "effluent": 4,
+                "biogas": 5,
+                "anaerobic digestion": 5,
+                "digester": 4,
+                "sludge": 3,
+                "municipal water": 4,
+                "desalination": 4,
+                "irrigation": 3
+            }
+        },
+        "project_match": {
+            "max_score": 25,
+            "detection_keywords": ["projects", "case studies", "case study", "references", "completed projects", "ongoing projects", "our projects"],
+            "content_keywords": ["wastewater", "water treatment", "biogas"],
+            "has_project_base": 10,
+            "has_water_content": 15,
+            "low_relevance": 5
+        },
+        "company_type": {
+            "max_score": 20,
+            "types": {
+                "EPC": 20,
+                "Contractor": 18,
+                "Water Treatment Company": 18,
+                "Manufacturer": 12,
+                "Distributor": 10,
+                "Consultant": 6,
+                "Other": 0
+            }
+        },
+        "country": {
+            "max_score": 15,
+            "weights_file": "country_weights.json"
+        },
+        "contact": {
+            "max_score": 10,
+            "tiers": [
+                {"min_emails": 0, "score": 0},
+                {"min_emails": 1, "score": 3},
+                {"min_emails": 2, "score": 5},
+                {"min_emails": 3, "score": 8},
+                {"min_emails": 4, "score": 10}
+            ]
+        }
+    },
+
+    "priority_rules": {
+        "A": {"min": 80, "max": 100},
+        "B": {"min": 60, "max": 79},
+        "C": {"min": 40, "max": 59},
+        "D": {"min": 0, "max": 39}
+    },
+
+    "positive_keywords": [
+        "wastewater", "water treatment", "sewage", "effluent",
+        "biogas", "anaerobic", "digester", "tank", "storage tank",
+        "reservoir", "municipal water", "desalination", "irrigation",
+        "industrial water"
+    ],
+
+    "negative_keywords": [
+        "career", "job", "vacancy", "news", "blog", "school", "university"
+    ]
+}
