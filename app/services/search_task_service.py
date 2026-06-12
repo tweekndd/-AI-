@@ -91,7 +91,7 @@ async def run_search_task(task_id: int):
             expanded_keywords = json.loads(task.expanded_keywords)
         else:
             logger.info(f"正在扩展关键词: {task.keyword}")
-            expanded = await expand_keywords(task.keyword)
+            expanded = await expand_keywords(task.keyword, country=task.country)
             if expanded and len(expanded) > 0:
                 expanded_keywords = expanded
             else:
@@ -248,6 +248,7 @@ async def _auto_analyze_and_save(
     cached_website = get_website_cache(db, domain)
     if cached_website:
         website_text = cached_website["content"]
+        customer.scrape_status = "success"
         logger.info(f"使用官网缓存: {domain}")
     else:
         website_text = await retry_async(
@@ -257,7 +258,17 @@ async def _auto_analyze_and_save(
             task_name=f"官网抓取[{domain}]",
         )
         if website_text:
+            customer.scrape_status = "success"
             save_website_cache(db, domain, website_text)
+        else:
+            customer.scrape_status = "failed"
+            customer.fail_reason = "官网抓取失败（网站可能无法访问或反爬）"
+            db.commit()
+            logger.warning(f"官网抓取失败: {domain}")
+            # 没有官网内容就不继续了
+            customer.analyzed_at = datetime.datetime.utcnow()
+            db.commit()
+            return
 
     if website_text:
         customer.website_text = website_text
@@ -299,7 +310,11 @@ async def _auto_analyze_and_save(
                 task_name=f"AI分析[{domain}]",
             )
             if ai_result:
+                customer.ai_status = "success"
                 save_analysis_cache(db, domain, website_text, ai_result)
+            else:
+                customer.ai_status = "failed"
+                customer.fail_reason = "AI分析失败（API可能超时）"
 
         if ai_result:
             customer.ai_raw_json = json.dumps(ai_result, ensure_ascii=False)

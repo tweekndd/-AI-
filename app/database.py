@@ -1,10 +1,10 @@
 """
 数据库配置与模型定义
-V2.0：新增 search_tasks, search_cache, website_cache, analysis_cache 表
-       Customer 新增 discovery_source, discovery_keyword, first_found_at
+V2.2：Customer 新增跟进状态（status/follow_up_date/notes）
+       新增抓取/分析状态字段（scrape_status/ai_status/fail_reason）
 """
 import datetime
-from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Date
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 # 数据库文件路径（SQLite本地文件）
@@ -57,6 +57,16 @@ class Customer(Base):
     ai_raw_json = Column(Text, nullable=True, comment="AI返回的原始JSON数据")
     created_at = Column(DateTime, default=datetime.datetime.utcnow, comment="创建时间")
     analyzed_at = Column(DateTime, nullable=True, comment="分析完成时间")
+
+    # V2.2 新增：客户跟进状态
+    status = Column(String(20), default="待联系", comment="跟进状态: 待联系/已发邮件/已回复/无效线索/成单")
+    follow_up_date = Column(Date, nullable=True, comment="下次跟进日期")
+    notes = Column(Text, nullable=True, comment="跟进备注")
+
+    # V2.2 新增：抓取/分析状态（用于失败可视化）
+    scrape_status = Column(String(20), nullable=True, comment="官网抓取状态: success/failed/partial/skipped")
+    ai_status = Column(String(20), nullable=True, comment="AI分析状态: success/failed/skipped")
+    fail_reason = Column(String(500), nullable=True, comment="失败原因描述")
 
 
 class SearchTask(Base):
@@ -129,5 +139,32 @@ def get_db():
 
 
 def init_db():
-    """初始化数据库：创建所有表"""
+    """初始化数据库：创建所有表 + 自动迁移新增列（V2.2 支持）"""
     Base.metadata.create_all(bind=engine)
+
+    # ── 自动迁移：检查并添加缺失的列（SQLite 不支持 DROP COLUMN，但支持 ADD COLUMN）──
+    _migrate_add_column(engine, "customers", "status", "VARCHAR(20) DEFAULT '待联系'")
+    _migrate_add_column(engine, "customers", "follow_up_date", "DATE")
+    _migrate_add_column(engine, "customers", "notes", "TEXT")
+    _migrate_add_column(engine, "customers", "scrape_status", "VARCHAR(20)")
+    _migrate_add_column(engine, "customers", "ai_status", "VARCHAR(20)")
+    _migrate_add_column(engine, "customers", "fail_reason", "VARCHAR(500)")
+
+
+def _migrate_add_column(engine, table: str, column: str, col_type: str):
+    """
+    检查表是否存在某列，不存在则添加
+    这是为了兼容已有数据库文件，无需手动执行迁移
+    """
+    import sqlalchemy as sa
+    try:
+        with engine.connect() as conn:
+            # 检查列是否存在
+            inspector = sa.inspect(engine)
+            columns = [c["name"] for c in inspector.get_columns(table)]
+            if column not in columns:
+                conn.execute(sa.text(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}"))
+                conn.commit()
+                print(f"  数据库迁移: {table}.{column} 列已添加")
+    except Exception as e:
+        print(f"  数据库迁移跳过 {table}.{column}: {e}")

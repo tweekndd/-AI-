@@ -59,11 +59,46 @@
             <!-- 操作按钮 -->
             <div class="d-flex gap-2 mb-4">
                 <button class="btn btn-success" onclick="analyzeCustomer()" id="btnAnalyze"><i class="bi bi-lightning"></i> 分析此客户</button>
+                <button class="btn btn-outline-warning" onclick="rescrapeCustomer()" id="btnRescrape"><i class="bi bi-arrow-clockwise"></i> 重新抓取</button>
+                <button class="btn btn-outline-info" onclick="reanalyzeCustomer()" id="btnReanalyze"><i class="bi bi-robot"></i> 重新AI分析</button>
                 <button class="btn btn-danger" onclick="stopAndBack()" id="btnStopDetail" style="display:none;"><i class="bi bi-stop-circle"></i> 停止并返回</button>
                 <button class="btn btn-outline-secondary" onclick="window.location.href='/'"><i class="bi bi-arrow-left"></i> 返回列表</button>
             </div>
 
             <div class="row g-4">
+
+                <!-- 跟进记录区 -->
+                <div class="col-12">
+                    <div class="card border-0 shadow-sm">
+                        <div class="card-header bg-white"><h6 class="mb-0"><i class="bi bi-clipboard-check"></i> 跟进记录</h6></div>
+                        <div class="card-body">
+                            <div class="row g-2">
+                                <div class="col-md-3">
+                                    <label class="form-label small">跟进状态</label>
+                                    <select class="form-select form-select-sm" id="followUpStatus">
+                                        <option value="待联系">待联系</option>
+                                        <option value="已发邮件">已发邮件</option>
+                                        <option value="已回复">已回复</option>
+                                        <option value="无效线索">无效线索</option>
+                                        <option value="成单">成单</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-3">
+                                    <label class="form-label small">下次跟进日期</label>
+                                    <input type="date" class="form-control form-control-sm" id="followUpDate">
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label small">备注</label>
+                                    <input type="text" class="form-control form-control-sm" id="followUpNotes" placeholder="记录跟进备注...">
+                                </div>
+                                <div class="col-md-2 d-flex align-items-end">
+                                    <button class="btn btn-primary btn-sm w-100" onclick="saveFollowUp()"><i class="bi bi-save"></i> 保存</button>
+                                </div>
+                            </div>
+                            <div id="followUpSaved" class="d-none small text-success mt-1"><i class="bi bi-check-circle"></i> 已保存</div>
+                        </div>
+                    </div>
+                </div>
 
                 <!-- 评分明细 -->
                 <div class="col-md-6">
@@ -265,6 +300,25 @@
             if (c.website_text) { te.textContent = c.website_text; document.getElementById('textLength').textContent = `${c.website_text.length} 字符`; }
             else { te.textContent = '暂无官网内容'; document.getElementById('textLength').textContent = '0 字符'; }
 
+            // 跟进记录
+            document.getElementById('followUpStatus').value = c.status || '待联系';
+            if (c.follow_up_date) {
+                document.getElementById('followUpDate').value = c.follow_up_date;
+            } else {
+                document.getElementById('followUpDate').value = '';
+            }
+            document.getElementById('followUpNotes').value = c.notes || '';
+
+            // 抓取/分析状态在基本信息上显示图标
+            let statusIcons = '';
+            if (c.scrape_status === 'success') statusIcons += '<span class="badge bg-success ms-1" title="官网抓取成功">✅ 抓取成功</span>';
+            else if (c.scrape_status === 'failed') statusIcons += '<span class="badge bg-danger ms-1" title="官网抓取失败">❌ 抓取失败</span>';
+            if (c.ai_status === 'success') statusIcons += '<span class="badge bg-success ms-1" title="AI分析成功">🧠 分析成功</span>';
+            else if (c.ai_status === 'failed') statusIcons += '<span class="badge bg-danger ms-1" title="AI分析失败">💀 分析失败</span>';
+            if (c.fail_reason) statusIcons += `<span class="badge bg-secondary ms-1" title="${c.fail_reason}">⚠️ 失败</span>`;
+            const statusContainer = document.getElementById('discoverySourceBadge');
+            if (statusIcons) statusContainer.innerHTML += ' ' + statusIcons;
+
             document.getElementById('pageTitle').textContent = c.company_name;
         }
 
@@ -307,6 +361,46 @@
         async function stopAndBack() {
             try { await fetch('/api/stop-analysis', { method: 'POST' }); } catch (err) {}
             window.location.href = '/';
+        }
+
+        // ── 保存跟进状态 ──
+        async function saveFollowUp() {
+            const status = document.getElementById('followUpStatus').value;
+            const date = document.getElementById('followUpDate').value;
+            const notes = document.getElementById('followUpNotes').value;
+            try {
+                let url = `/api/customers/${customerId}/follow-up?status=${encodeURIComponent(status)}`;
+                if (date) url += `&follow_up_date=${encodeURIComponent(date)}`;
+                if (notes) url += `&notes=${encodeURIComponent(notes)}`;
+                const resp = await fetch(url, { method: 'POST' });
+                const data = await resp.json();
+                if (!resp.ok) throw new Error(data.detail || '保存失败');
+                const saved = document.getElementById('followUpSaved');
+                saved.classList.remove('d-none');
+                setTimeout(() => saved.classList.add('d-none'), 2000);
+            } catch (err) { alert('保存失败: ' + err.message); }
+        }
+
+        // ── 重新抓取 ──
+        async function rescrapeCustomer() {
+            if (!confirm('确定要重新抓取该客户的官网吗？')) return;
+            try {
+                const resp = await fetch(`/api/customers/${customerId}/re-scrape`, { method: 'POST' });
+                const data = await resp.json();
+                if (!resp.ok) throw new Error(data.detail || '重新抓取失败');
+                await loadDetail(); alert('重新抓取完成');
+            } catch (err) { alert('重新抓取失败: ' + err.message); }
+        }
+
+        // ── 重新AI分析 ──
+        async function reanalyzeCustomer() {
+            if (!confirm('确定要重新AI分析该客户吗？')) return;
+            try {
+                const resp = await fetch(`/api/customers/${customerId}/re-analyze`, { method: 'POST' });
+                const data = await resp.json();
+                if (!resp.ok) throw new Error(data.detail || '重新分析失败');
+                await loadDetail(); alert('重新分析完成');
+            } catch (err) { alert('重新分析失败: ' + err.message); }
         }
 
         document.addEventListener('DOMContentLoaded', loadDetail);

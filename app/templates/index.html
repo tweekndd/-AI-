@@ -14,7 +14,7 @@
         <div class="container-fluid">
             <a class="navbar-brand d-flex align-items-center" href="/">
                 <i class="bi bi-robot me-2"></i>
-                <span class="fw-bold">AI Trade Customer Analyzer V2.0</span>
+                <span class="fw-bold">AI Trade Customer Analyzer V2.2</span>
             </a>
             <div class="d-flex align-items-center">
                 <a href="/" class="btn btn-sm btn-outline-light me-2"><i class="bi bi-people"></i> 客户列表</a>
@@ -115,13 +115,23 @@
                             <option value="">所有国家</option>
                         </select>
                     </div>
-                    <div class="col-md-2">
+                    <div class="col-md-3">
                         <select class="form-select" id="priorityFilter" onchange="loadCustomers()">
                             <option value="">所有优先级</option>
                             <option value="A">A级 (80-100)</option>
                             <option value="B">B级 (60-79)</option>
                             <option value="C">C级 (40-59)</option>
                             <option value="D">D级 (0-39)</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <select class="form-select" id="statusFilter" onchange="loadCustomers()">
+                            <option value="">所有状态</option>
+                            <option value="待联系">待联系</option>
+                            <option value="已发邮件">已发邮件</option>
+                            <option value="已回复">已回复</option>
+                            <option value="无效线索">无效线索</option>
+                            <option value="成单">成单</option>
                         </select>
                     </div>
                     <div class="col-md-3">
@@ -147,11 +157,11 @@
                             <tr>
                                 <th>公司名称</th>
                                 <th>国家</th>
-                                <th>发现来源</th>
+                                <th>状态</th>
+                                <th>来源</th>
                                 <th>邮箱</th>
                                 <th>总分</th>
                                 <th>优先级</th>
-                                <th>摘要</th>
                                 <th>操作</th>
                             </tr>
                         </thead>
@@ -196,11 +206,13 @@
             const search = document.getElementById('searchInput').value;
             const country = document.getElementById('countryFilter').value;
             const priority = document.getElementById('priorityFilter').value;
+            const status = document.getElementById('statusFilter').value;
             const sort = document.getElementById('sortFilter').value;
             let url = `/api/customers?sort_by_score=${sort}`;
             if (search) url += `&search=${encodeURIComponent(search)}`;
             if (country) url += `&country=${encodeURIComponent(country)}`;
             if (priority) url += `&priority=${encodeURIComponent(priority)}`;
+            if (status) url += `&status=${encodeURIComponent(status)}`;
             try {
                 const resp = await fetch(url);
                 const data = await resp.json();
@@ -220,22 +232,41 @@
                 return;
             }
             const pBadge = { 'A': 'bg-danger', 'B': 'bg-warning text-dark', 'C': 'bg-info text-dark', 'D': 'bg-secondary' };
+            const statusBadge = { '待联系': 'bg-secondary', '已发邮件': 'bg-primary', '已回复': 'bg-success', '无效线索': 'bg-dark', '成单': 'bg-warning text-dark' };
+            // 抓取/分析状态图标
+            function scrapeIcon(c) {
+                if (c.scrape_status === 'success') return '<span class="badge bg-success" title="官网抓取成功">✅</span>';
+                if (c.scrape_status === 'failed') return '<span class="badge bg-danger" title="官网抓取失败">❌</span>';
+                if (c.scrape_status === 'partial') return '<span class="badge bg-warning text-dark" title="部分抓取">⚠️</span>';
+                return '';
+            }
+            function aiIcon(c) {
+                if (c.ai_status === 'success') return '<span class="badge bg-success" title="AI分析成功">🧠</span>';
+                if (c.ai_status === 'failed') return '<span class="badge bg-danger" title="AI分析失败">💀</span>';
+                if (c.ai_status === 'skipped') return '<span class="badge bg-secondary" title="已跳过">⏭️</span>';
+                return '';
+            }
             let html = '';
             data.customers.forEach(c => {
                 const bc = pBadge[c.priority] || 'bg-secondary';
                 const sc = c.total_score >= 80 ? 'text-danger' : c.total_score >= 60 ? 'text-warning' : c.total_score >= 40 ? 'text-info' : 'text-muted';
+                const statusCls = statusBadge[c.status] || 'bg-secondary';
+                const statusLabel = c.status || '待联系';
+                const failTip = c.fail_reason ? ` title="${_esc(c.fail_reason)}"` : '';
                 sourceIcon = c.discovery_source === 'Google' ? '<span class="badge bg-info"><i class="bi bi-google"></i> Google</span>' : '<span class="badge bg-secondary"><i class="bi bi-upload"></i> 导入</span>';
                 html += `<tr>
-                    <td><a href="/customer/${c.id}" class="text-decoration-none fw-medium">${c.company_name}</a></td>
-                    <td><span class="badge bg-light text-dark">${c.country || '-'}</span></td>
-                    <td>${sourceIcon}</td>
+                    <td><a href="/customer/${c.id}" class="text-decoration-none fw-medium">${_esc(c.company_name)}</a></td>
+                    <td><span class="badge bg-light text-dark">${_esc(c.country) || '-'}</span></td>
+                    <td><span class="badge ${statusCls}">${_esc(statusLabel)}</span></td>
+                    <td>${sourceIcon} ${scrapeIcon(c)} ${aiIcon(c)}</td>
                     <td><span class="badge bg-secondary">${c.email_count}</span></td>
                     <td class="${sc} fw-bold">${c.total_score ?? '-'}</td>
                     <td><span class="badge ${bc}">${c.priority || '-'}</span></td>
-                    <td class="small text-muted" style="max-width: 200px;">${c.ai_summary ? c.ai_summary.substring(0, 60) + '...' : '-'}</td>
                     <td><div class="btn-group btn-group-sm">
                         <a href="/customer/${c.id}" class="btn btn-outline-primary" title="查看详情"><i class="bi bi-eye"></i></a>
                         <button class="btn btn-outline-success" onclick="analyzeSingle(${c.id})" title="分析"><i class="bi bi-lightning"></i></button>
+                        <button class="btn btn-outline-warning" onclick="rescrapeCustomer(${c.id})" title="重新抓取"><i class="bi bi-arrow-clockwise"></i></button>
+                        <button class="btn btn-outline-info" onclick="reanalyzeCustomer(${c.id})" title="重新AI分析"><i class="bi bi-robot"></i></button>
                         <button class="btn btn-outline-danger" onclick="deleteCustomer(${c.id})" title="删除"><i class="bi bi-trash"></i></button>
                     </div></td>
                 </tr>`;
@@ -341,6 +372,37 @@
 
         function debouncedSearch() { clearTimeout(searchTimer); searchTimer = setTimeout(() => { loadCustomers(); }, 400); }
         function refreshData() { loadCustomers(); loadStats(); }
+
+        // ── 安全转义 ──
+        function _esc(str) {
+            if (str === null || str === undefined) return '';
+            const d = document.createElement('div');
+            d.textContent = String(str);
+            return d.innerHTML;
+        }
+
+        // ── 重新抓取 ──
+        async function rescrapeCustomer(id) {
+            if (!confirm('确定要重新抓取该客户的官网吗？')) return;
+            try {
+                const resp = await fetch(`/api/customers/${id}/re-scrape`, { method: 'POST' });
+                const data = await resp.json();
+                if (!resp.ok) throw new Error(data.detail || '重新抓取失败');
+                loadCustomers(); loadStats(); alert('重新抓取完成');
+            } catch (err) { alert('重新抓取失败: ' + err.message); }
+        }
+
+        // ── 重新AI分析 ──
+        async function reanalyzeCustomer(id) {
+            if (!confirm('确定要重新AI分析该客户吗？')) return;
+            try {
+                const resp = await fetch(`/api/customers/${id}/re-analyze`, { method: 'POST' });
+                const data = await resp.json();
+                if (!resp.ok) throw new Error(data.detail || '重新分析失败');
+                loadCustomers(); loadStats(); alert('重新分析完成');
+            } catch (err) { alert('重新分析失败: ' + err.message); }
+        }
+
         document.addEventListener('DOMContentLoaded', () => { loadCustomers(); loadStats(); });
     </script>
 

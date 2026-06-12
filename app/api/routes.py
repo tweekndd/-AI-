@@ -18,6 +18,8 @@ from app.services.deepseek_analyzer import analyze_company, generate_summary
 from app.services.scoring_engine import calculate_scores
 from app.services.search_task_service import run_search_task, request_stop, get_stop_flag, get_paused_tasks, resume_paused_task
 from app.services.keyword_expander import expand_keywords
+from app.services.keyword_analyzer import analyze_keywords
+from app.services.scoring_engine import calculate_scores
 
 router = APIRouter(prefix="/api", tags=["customers"])
 
@@ -44,6 +46,7 @@ def list_customers(
     search: Optional[str] = Query(None),
     country: Optional[str] = Query(None),
     priority: Optional[str] = Query(None),
+    status: Optional[str] = Query(None, description="跟进状态筛选: 待联系/已发邮件/已回复/无效线索/成单"),
     sort_by_score: Optional[str] = Query("desc"),
     db: Session = Depends(get_db),
 ):
@@ -54,6 +57,8 @@ def list_customers(
         query = query.filter(Customer.country == country)
     if priority:
         query = query.filter(Customer.priority == priority.upper())
+    if status:
+        query = query.filter(Customer.status == status)
     if sort_by_score == "asc":
         query = query.order_by(Customer.total_score.asc().nullslast())
     else:
@@ -83,6 +88,13 @@ def list_customers(
             "is_analyzing": c.id in _analyzing_set,
             "created_at": c.created_at.isoformat() if c.created_at else None,
             "analyzed_at": c.analyzed_at.isoformat() if c.analyzed_at else None,
+            # V2.2 跟进状态
+            "status": c.status or "待联系",
+            "follow_up_date": c.follow_up_date.isoformat() if c.follow_up_date else None,
+            # V2.2 抓取/分析状态
+            "scrape_status": c.scrape_status,
+            "ai_status": c.ai_status,
+            "fail_reason": c.fail_reason,
         })
 
     return {"customers": result, "total": len(result), "countries": country_list}
@@ -145,6 +157,14 @@ def get_customer_detail(customer_id: int, db: Session = Depends(get_db)):
         "is_analyzing": customer.id in _analyzing_set,
         "created_at": customer.created_at.isoformat() if customer.created_at else None,
         "analyzed_at": customer.analyzed_at.isoformat() if customer.analyzed_at else None,
+        # V2.2 跟进状态
+        "status": customer.status or "待联系",
+        "follow_up_date": customer.follow_up_date.isoformat() if customer.follow_up_date else None,
+        "notes": customer.notes or "",
+        # V2.2 抓取/分析状态
+        "scrape_status": customer.scrape_status,
+        "ai_status": customer.ai_status,
+        "fail_reason": customer.fail_reason,
     }
 
 
@@ -180,6 +200,7 @@ async def analyze_single(customer_id: int, db: Session = Depends(get_db)):
     try:
         website_text = await scrape_website(customer.website)
         if website_text:
+            customer.scrape_status = "success"
             customer.website_text = website_text
             emails = extract_emails_from_text(website_text)
             email_list = list(set(emails))
@@ -189,6 +210,7 @@ async def analyze_single(customer_id: int, db: Session = Depends(get_db)):
             customer.negative_keywords = json.dumps(neg_hits, ensure_ascii=False)
             ai_result = await analyze_company(website_text)
             if ai_result:
+                customer.ai_status = "success"
                 customer.ai_raw_json = json.dumps(ai_result, ensure_ascii=False)
                 customer.company_type = ai_result.get("company_type", "")
                 customer.sales_hook = ai_result.get("sales_hook", "")
@@ -196,6 +218,9 @@ async def analyze_single(customer_id: int, db: Session = Depends(get_db)):
                 customer.identified_projects = ai_result.get("identified_projects", "")
                 customer_info = {"country": customer.country or "", "company_name": customer.company_name}
                 customer.ai_summary = generate_summary(ai_result, customer_info)
+            else:
+                customer.ai_status = "failed"
+                customer.fail_reason = "AI分析失败（API可能超时）"
             scores = calculate_scores(
                 website_text=website_text, positive_keywords=pos_hits,
                 company_type=customer.company_type, country=customer.country, emails=email_list,
@@ -320,12 +345,15 @@ def get_stats(db: Session = Depends(get_db)):
 # ═══════════════════════════════════════════
 
 @router.post("/discovery/expand-keywords")
-async def api_expand_keywords(keyword: str = Query(..., description="需要扩展的基础关键词")):
-    """AI扩展关键词"""
-    expanded = await expand_keywords(keyword)
+async def api_expand_keywords(
+    keyword: str = Query(..., description="需要扩展的基础关键词"),
+    country: str = Query("", description="目标国家（可选，传入后AI会用该国家的本地语言扩展关键词）"),
+):
+    """AI扩展关键词（支持多语言：传入 country 会自动使用该国语言）"""
+    expanded = await expand_keywords(keyword, country=country)
     if not expanded:
         expanded = [keyword]
-    return {"original_keyword": keyword, "expanded_keywords": expanded}
+    return {"original_keyword": keyword, "expanded_keywords": expanded, "country": country}
 
 
 @router.post("/discovery/search-task")
@@ -505,3 +533,157 @@ def list_discovered_customers(
         })
 
     return {"customers": result, "total": len(result), "countries": country_list, "keywords": keyword_list}
+
+
+# ═══════════════════════════════════════════
+# V2.2 新增：客户跟进状态管理
+# ═══════════════════════════════════════════
+
+@router.post("/customers/{customer_id}/follow-up")
+def update_follow_up(
+    customer_id: int,
+    status: str = Query(..., description="跟进状态: 待联系/已发邮件/已回复/无效线索/成单"),
+    follow_up_date: Optional[str] = Query(None, description="下次跟进日期 (YYYY-MM-DD)"),
+    notes: Optional[str] = Query("", description="跟进备注"),
+    db: Session = Depends(get_db),
+):
+    """更新客户跟进状态"""
+    customer = db.query(Customer).filter(Customer.id == customer_id).first()
+    if not customer:
+        raise HTTPException(status_code=404, detail="客户不存在")
+
+    valid_statuses = ["待联系", "已发邮件", "已回复", "无效线索", "成单"]
+    if status not in valid_statuses:
+        raise HTTPException(status_code=400, detail=f"无效状态，可选: {'/'.join(valid_statuses)}")
+
+    customer.status = status
+    if follow_up_date:
+        try:
+            customer.follow_up_date = datetime.datetime.strptime(follow_up_date, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="日期格式错误，请使用 YYYY-MM-DD")
+    if notes:
+        customer.notes = notes
+    db.commit()
+
+    return {"message": "跟进状态已更新", "customer_id": customer.id, "status": customer.status}
+
+
+# ═══════════════════════════════════════════
+# V2.2 新增：重新抓取 / 重新分析（局部重试）
+# ═══════════════════════════════════════════
+
+@router.post("/customers/{customer_id}/re-scrape")
+async def rescrape_customer(customer_id: int, db: Session = Depends(get_db)):
+    """重新抓取客户官网（保留已有AI分析结果，仅刷新抓取数据）"""
+    if customer_id in _analyzing_set:
+        raise HTTPException(status_code=400, detail="该客户正在分析中")
+    customer = db.query(Customer).filter(Customer.id == customer_id).first()
+    if not customer:
+        raise HTTPException(status_code=404, detail="客户不存在")
+    if not customer.website:
+        raise HTTPException(status_code=400, detail="该客户没有官网地址")
+
+    _analyzing_set.add(customer_id)
+    try:
+        domain = customer.website.replace("https://", "").replace("http://", "").split("/")[0]
+        website_url = f"https://{domain}"
+        website_text = await scrape_website(website_url)
+
+        if website_text:
+            customer.scrape_status = "success"
+            customer.website_text = website_text
+            # 重新提取邮箱
+            emails = extract_emails_from_text(website_text)
+            email_list = list(set(emails))
+            customer.emails = json.dumps(email_list, ensure_ascii=False)
+            # 重新关键词分析
+            pos_hits, neg_hits = analyze_keywords(website_text)
+            customer.positive_keywords = json.dumps(pos_hits, ensure_ascii=False)
+            customer.negative_keywords = json.dumps(neg_hits, ensure_ascii=False)
+            # 重新评分
+            scores = calculate_scores(
+                website_text=website_text, positive_keywords=pos_hits,
+                company_type=customer.company_type, country=customer.country, emails=email_list,
+            )
+            customer.industry_score = scores["industry_score"]
+            customer.project_score = scores["project_score"]
+            customer.company_type_score = scores["company_type_score"]
+            customer.country_score = scores["country_score"]
+            customer.contact_score = scores["contact_score"]
+            customer.total_score = scores["total_score"]
+            customer.priority = scores["priority"]
+        else:
+            customer.scrape_status = "failed"
+            customer.fail_reason = "抓取失败（网站可能无法访问）"
+
+        customer.analyzed_at = datetime.datetime.utcnow()
+        db.commit()
+        return {"message": "重新抓取完成", "customer_id": customer.id, "scrape_status": customer.scrape_status}
+    except Exception as e:
+        db.rollback()
+        customer.scrape_status = "failed"
+        customer.fail_reason = str(e)[:200]
+        db.commit()
+        raise HTTPException(status_code=500, detail=f"重新抓取失败: {str(e)[:200]}")
+    finally:
+        _analyzing_set.discard(customer_id)
+
+
+@router.post("/customers/{customer_id}/re-analyze")
+async def reanalyze_customer(customer_id: int, db: Session = Depends(get_db)):
+    """重新AI分析客户（仅重新调用DeepSeek，不重新抓取）"""
+    if customer_id in _analyzing_set:
+        raise HTTPException(status_code=400, detail="该客户正在分析中")
+    customer = db.query(Customer).filter(Customer.id == customer_id).first()
+    if not customer:
+        raise HTTPException(status_code=404, detail="客户不存在")
+    if not customer.website_text:
+        raise HTTPException(status_code=400, detail="没有官网内容，请先抓取官网")
+
+    _analyzing_set.add(customer_id)
+    try:
+        ai_result = await analyze_company(customer.website_text)
+        if ai_result:
+            customer.ai_status = "success"
+            customer.ai_raw_json = json.dumps(ai_result, ensure_ascii=False)
+            customer.company_type = ai_result.get("company_type", "")
+            customer.sales_hook = ai_result.get("sales_hook", "")
+            customer.target_position = ai_result.get("target_position", "")
+            customer.identified_projects = ai_result.get("identified_projects", "")
+            customer_info = {"country": customer.country or "", "company_name": customer.company_name}
+            customer.ai_summary = generate_summary(ai_result, customer_info)
+            # 重新评分（公司类型可能变了）
+            pos_hits = {}
+            if customer.positive_keywords:
+                try:
+                    pos_hits = json.loads(customer.positive_keywords)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            emails = _get_emails_list(customer)
+            scores = calculate_scores(
+                website_text=customer.website_text, positive_keywords=pos_hits,
+                company_type=customer.company_type, country=customer.country, emails=emails,
+            )
+            customer.industry_score = scores["industry_score"]
+            customer.project_score = scores["project_score"]
+            customer.company_type_score = scores["company_type_score"]
+            customer.country_score = scores["country_score"]
+            customer.contact_score = scores["contact_score"]
+            customer.total_score = scores["total_score"]
+            customer.priority = scores["priority"]
+        else:
+            customer.ai_status = "failed"
+            customer.fail_reason = "AI分析失败（API可能超时）"
+
+        customer.analyzed_at = datetime.datetime.utcnow()
+        db.commit()
+        return {"message": "重新分析完成", "customer_id": customer.id, "ai_status": customer.ai_status}
+    except Exception as e:
+        db.rollback()
+        customer.ai_status = "failed"
+        customer.fail_reason = str(e)[:200]
+        db.commit()
+        raise HTTPException(status_code=500, detail=f"重新分析失败: {str(e)[:200]}")
+    finally:
+        _analyzing_set.discard(customer_id)

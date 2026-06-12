@@ -1,8 +1,7 @@
 """
-Google搜索发现服务（V2.0 使用 SerpAPI）
+Google搜索发现服务（V2.2 升级）
+支持多语言搜索：根据目标国家自动设置 hl/lr/cr 参数
 通过 SerpAPI 调用 Google 搜索，稳定可靠，无需处理反爬
-API Key 通过环境变量 SERPAPI_API_KEY 传入
-每月250次搜索限制
 """
 import os
 import asyncio
@@ -10,6 +9,8 @@ from typing import List, Dict, Optional
 from urllib.parse import urlparse
 
 import httpx
+
+from app.services.country_language_map import get_language_info
 
 
 # SerpAPI 配置
@@ -30,6 +31,7 @@ async def search_google(
 ) -> List[Dict]:
     """
     通过 SerpAPI 搜索 Google，返回搜索结果列表
+    支持多语言：自动根据 country 设置搜索语言和国家限制
     每个结果包含：title, website, snippet
     注意：每次API调用算一次搜索，翻页也会消耗配额
     """
@@ -43,17 +45,29 @@ async def search_google(
     # 最多获取的页数（限制最多5页=50条，节省API配额）
     max_pages = min((max_results + RESULTS_PER_PAGE - 1) // RESULTS_PER_PAGE, 5)
 
-    # 国家代码映射
-    country_code = _get_country_code(country)
+    # 从语言映射表获取完整参数
+    lang_info = get_language_info(country) if country else None
 
-    # 用户的关键词本身已经包含国家信息（如 "wastewater contractor Saudi Arabia"）
-    # SerpAPI 的 q 参数直接用原始关键词，cr/gl 做辅助限制
-    search_query = f"{keyword} {country}" if country else keyword
+    if lang_info:
+        country_code = lang_info["gl"]           # gl 参数（如 "pl", "es"）
+        hl_code = lang_info["hl"]               # hl 参数（如 "pl", "es"）
+        lr_code = lang_info["lr"]               # lr 参数（如 "lang_pl"）
+        cr_code = lang_info["cr"]               # cr 参数（如 "countryPL"）
+        language = lang_info["language"]
+        print(f"  多语言搜索: {country} → {language} (hl={hl_code}, lr={lr_code}, cr={cr_code}, gl={country_code})")
+    else:
+        country_code = ""
+        hl_code = "en"
+        lr_code = ""
+        cr_code = ""
+
+    # 关键词直接用（如果是多语言模式，关键词已经是目标语言，无需拼接国家名）
+    search_query = keyword
 
     for page in range(max_pages):
         start = page * RESULTS_PER_PAGE
 
-        results = await _fetch_via_serpapi(search_query, country_code, start)
+        results = await _fetch_via_serpapi(search_query, country_code, hl_code, lr_code, cr_code, start)
 
         if not results:
             print(f"  SerpAPI 第{page+1}页无结果，停止翻页")
@@ -79,72 +93,17 @@ async def search_google(
     return results_list
 
 
-def _get_country_code(country: str) -> str:
-    """将国家名称转换为 SerpAPI 的 gl 参数"""
-    country_map = {
-        "saudi arabia": "sa",
-        "uae": "ae",
-        "united arab emirates": "ae",
-        "qatar": "qa",
-        "australia": "au",
-        "usa": "us",
-        "united states": "us",
-        "canada": "ca",
-        "united kingdom": "uk",
-        "uk": "uk",
-        "germany": "de",
-        "france": "fr",
-        "italy": "it",
-        "spain": "es",
-        "netherlands": "nl",
-        "brazil": "br",
-        "mexico": "mx",
-        "chile": "cl",
-        "argentina": "ar",
-        "india": "in",
-        "china": "cn",
-        "japan": "jp",
-        "south korea": "kr",
-        "turkey": "tr",
-        "egypt": "eg",
-        "nigeria": "ng",
-        "south africa": "za",
-        "russia": "ru",
-        "singapore": "sg",
-        "malaysia": "my",
-        "indonesia": "id",
-        "thailand": "th",
-        "vietnam": "vn",
-        "philippines": "ph",
-        "pakistan": "pk",
-        "bangladesh": "bd",
-        "iraq": "iq",
-        "iran": "ir",
-        "kuwait": "kw",
-        "oman": "om",
-        "bahrain": "bh",
-        "jordan": "jo",
-        "lebanon": "lb",
-        "morocco": "ma",
-        "algeria": "dz",
-        "tunisia": "tn",
-        "kenya": "ke",
-        "ghana": "gh",
-        "ethiopia": "et",
-        "tanzania": "tz",
-        "angola": "ao",
-        "mozambique": "mz",
-    }
-    return country_map.get(country.strip().lower(), "")
-
-
 async def _fetch_via_serpapi(
     query: str,
     country_code: str,
+    hl_code: str = "en",
+    lr_code: str = "",
+    cr_code: str = "",
     start: int = 0,
 ) -> Optional[List[Dict]]:
     """
     调用 SerpAPI 获取 Google 搜索结果
+    支持多语言参数：hl（界面语言）、lr（结果语言限制）、cr（国家限制）
     API 文档: https://serpapi.com/search-api
     """
     params = {
@@ -153,12 +112,16 @@ async def _fetch_via_serpapi(
         "q": query,
         "num": RESULTS_PER_PAGE,
         "start": start,
-        "hl": "en",
+        "hl": hl_code,
     }
 
-    # 如果指定了国家代码，添加地理定位
+    # 添加国家限制
     if country_code:
-        params["gl"] = country_code
+        params["gl"] = country_code       # 地理位置（Google 会优先返回该地区结果）
+    if lr_code:
+        params["lr"] = lr_code            # 语言限制（只返回该语言的结果）
+    if cr_code:
+        params["cr"] = cr_code            # 国家限制（只返回该国家/地区的结果）
 
     try:
         async with httpx.AsyncClient(timeout=30) as client:

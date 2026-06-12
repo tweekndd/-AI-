@@ -254,18 +254,22 @@
         // ═══════════════════════════════════════════
         async function previewKeywords() {
             const keyword = document.getElementById('discoveryKeyword').value.trim();
+            const country = document.getElementById('discoveryCountry').value.trim();
             if (!keyword) { alert('请输入关键词'); return; }
             const btn = document.getElementById('btnPreview');
             btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
             document.getElementById('previewResult').textContent = '正在扩展...';
             try {
-                const resp = await _fetchWithTimeout(`/api/discovery/expand-keywords?keyword=${encodeURIComponent(keyword)}`);
+                let url = `/api/discovery/expand-keywords?keyword=${encodeURIComponent(keyword)}`;
+                if (country) url += `&country=${encodeURIComponent(country)}`;
+                const resp = await _fetchWithTimeout(url);
                 if (!resp.ok) throw new Error('服务器错误');
                 const data = await resp.json();
                 const kws = _arr(data.expanded_keywords);
+                const langHint = data.country ? `（${_esc(data.country)}语言）` : '';
                 document.getElementById('previewResult').textContent =
                     kws.length > 0
-                        ? `扩展了 ${kws.length} 个关键词: ${kws.join(', ')}`
+                        ? `扩展了 ${kws.length} 个关键词${langHint}: ${kws.join(', ')}`
                         : '扩展失败，请重试';
             } catch (err) {
                 document.getElementById('previewResult').textContent = '扩展失败: ' + err.message;
